@@ -2,6 +2,7 @@
     script = echo "RUN: run-var.sh"
     env-script = 
     err-script = 
+    exit-script = 
     extra log files = 
     work sub-directory = 
     init-script = 
@@ -26,6 +27,8 @@
         succeeded handler = 
         retry handler = 
         failed handler = 
+        late handler = 
+        late offset = 
         handler events = 
         mail smtp = 
         handlers = 
@@ -56,9 +59,9 @@
         interval = 
         host = 
         max-polls = 
+        message = 
         run-dir = 
         user = 
-        template = 
         verbose mode = 
     [[[remote]]]
         owner = 
@@ -80,6 +83,7 @@
     script = echo "RUN: run-ops.sh"
     env-script = 
     err-script = 
+    exit-script = 
     extra log files = 
     work sub-directory = 
     init-script = 
@@ -104,6 +108,8 @@
         succeeded handler = 
         retry handler = 
         failed handler = 
+        late handler = 
+        late offset = 
         handler events = 
         mail smtp = 
         handlers = 
@@ -133,9 +139,9 @@
         interval = 
         host = 
         max-polls = 
+        message = 
         run-dir = 
         user = 
-        template = 
         verbose mode = 
     [[[remote]]]
         owner = 
@@ -157,6 +163,7 @@
     script = echo "RUN: run-ops.sh"
     env-script = 
     err-script = 
+    exit-script = 
     extra log files = 
     work sub-directory = 
     init-script = 
@@ -181,6 +188,8 @@
         succeeded handler = 
         retry handler = 
         failed handler = 
+        late handler = 
+        late offset = 
         handler events = 
         mail smtp = 
         handlers = 
@@ -211,9 +220,9 @@
         interval = 
         host = 
         max-polls = 
+        message = 
         run-dir = 
         user = 
-        template = 
         verbose mode = 
     [[[remote]]]
         owner = 
@@ -235,6 +244,7 @@
     script = echo "RUN: run-ops.sh"
     env-script = 
     err-script = 
+    exit-script = 
     extra log files = 
     work sub-directory = 
     init-script = 
@@ -259,6 +269,8 @@
         succeeded handler = 
         retry handler = 
         failed handler = 
+        late handler = 
+        late offset = 
         handler events = 
         mail smtp = 
         handlers = 
@@ -289,9 +301,9 @@
         interval = 
         host = 
         max-polls = 
+        message = 
         run-dir = 
         user = 
-        template = 
         verbose mode = 
     [[[remote]]]
         owner = 
@@ -313,6 +325,7 @@
     script = echo "RUN: run-ops.sh"
     env-script = 
     err-script = 
+    exit-script = 
     extra log files = 
     work sub-directory = 
     init-script = 
@@ -337,6 +350,8 @@
         succeeded handler = 
         retry handler = 
         failed handler = 
+        late handler = 
+        late offset = 
         handler events = 
         mail smtp = 
         handlers = 
@@ -367,9 +382,9 @@
         interval = 
         host = 
         max-polls = 
+        message = 
         run-dir = 
         user = 
-        template = 
         verbose mode = 
     [[[remote]]]
         owner = 
@@ -391,6 +406,7 @@
     script = echo "RUN: run-ops.sh"
     env-script = 
     err-script = 
+    exit-script = 
     extra log files = 
     work sub-directory = 
     init-script = 
@@ -426,6 +442,8 @@
         succeeded handler = 
         retry handler = 
         failed handler = 
+        late handler = 
+        late offset = 
     [[[environment]]]
     [[[parameter environment templates]]]
     [[[directives]]]
@@ -445,9 +463,9 @@
         interval = 
         host = 
         max-polls = 
+        message = 
         run-dir = 
         user = 
-        template = 
         verbose mode = 
     [[[remote]]]
         owner = 
@@ -469,6 +487,7 @@
     script = echo "RUN: run-var.sh"
     env-script = 
     err-script = 
+    exit-script = 
     extra log files = 
     work sub-directory = 
     init-script = 
@@ -504,6 +523,8 @@
         succeeded handler = 
         retry handler = 
         failed handler = 
+        late handler = 
+        late offset = 
     [[[environment]]]
     [[[parameter environment templates]]]
     [[[directives]]]
@@ -523,9 +544,9 @@
         interval = 
         host = 
         max-polls = 
+        message = 
         run-dir = 
         user = 
-        template = 
         verbose mode = 
     [[[remote]]]
         owner = 
@@ -547,6 +568,7 @@
     script = echo "RUN: run-var.sh"
     env-script = 
     err-script = 
+    exit-script = 
     extra log files = 
     work sub-directory = 
     init-script = 
@@ -582,6 +604,8 @@
         succeeded handler = 
         retry handler = 
         failed handler = 
+        late handler = 
+        late offset = 
     [[[environment]]]
     [[[parameter environment templates]]]
     [[[directives]]]
@@ -600,9 +624,9 @@
         interval = 
         host = 
         max-polls = 
+        message = 
         run-dir = 
         user = 
-        template = 
         verbose mode = 
     [[[remote]]]
         owner = 
@@ -624,6 +648,7 @@
     script = echo "RUN: run-var.sh"
     env-script = 
     err-script = 
+    exit-script = 
     extra log files = 
     work sub-directory = 
     init-script = 
@@ -659,6 +684,8 @@
         succeeded handler = 
         retry handler = 
         failed handler = 
+        late handler = 
+        late offset = 
     [[[environment]]]
     [[[parameter environment templates]]]
     [[[directives]]]
@@ -678,9 +705,9 @@
         interval = 
         host = 
         max-polls = 
+        message = 
         run-dir = 
         user = 
-        template = 
         verbose mode = 
     [[[remote]]]
         owner = 
@@ -701,6 +728,7 @@
 [[SERIAL]]
     env-script = 
     err-script = 
+    exit-script = 
     script = 
     extra log files = 
     work sub-directory = 
@@ -737,6 +765,8 @@
         succeeded handler = 
         retry handler = 
         failed handler = 
+        late handler = 
+        late offset = 
     [[[environment]]]
     [[[parameter environment templates]]]
     [[[directives]]]
@@ -756,9 +786,9 @@
         interval = 
         host = 
         max-polls = 
+        message = 
         run-dir = 
         user = 
-        template = 
         verbose mode = 
     [[[remote]]]
         owner = 
@@ -779,6 +809,7 @@
 [[root]]
     env-script = 
     err-script = 
+    exit-script = 
     script = 
     extra log files = 
     work sub-directory = 
@@ -815,6 +846,8 @@
         succeeded handler = 
         retry handler = 
         failed handler = 
+        late handler = 
+        late offset = 
     [[[environment]]]
     [[[parameter environment templates]]]
     [[[directives]]]
@@ -833,9 +866,9 @@
         interval = 
         host = 
         max-polls = 
+        message = 
         run-dir = 
         user = 
-        template = 
         verbose mode = 
     [[[remote]]]
         owner = 
@@ -856,6 +889,7 @@
 [[PARALLEL]]
     env-script = 
     err-script = 
+    exit-script = 
     script = 
     extra log files = 
     work sub-directory = 
@@ -892,6 +926,8 @@
         succeeded handler = 
         retry handler = 
         failed handler = 
+        late handler = 
+        late offset = 
     [[[environment]]]
     [[[parameter environment templates]]]
     [[[directives]]]
@@ -911,9 +947,9 @@
         interval = 
         host = 
         max-polls = 
+        message = 
         run-dir = 
         user = 
-        template = 
         verbose mode = 
     [[[remote]]]
         owner = 
@@ -935,6 +971,7 @@
     script = echo "RUN: run-var.sh"
     env-script = 
     err-script = 
+    exit-script = 
     extra log files = 
     work sub-directory = 
     init-script = 
@@ -970,6 +1007,8 @@
         succeeded handler = 
         retry handler = 
         failed handler = 
+        late handler = 
+        late offset = 
     [[[environment]]]
     [[[parameter environment templates]]]
     [[[directives]]]
@@ -989,9 +1028,9 @@
         interval = 
         host = 
         max-polls = 
+        message = 
         run-dir = 
         user = 
-        template = 
         verbose mode = 
     [[[remote]]]
         owner = 

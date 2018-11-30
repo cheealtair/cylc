@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -17,17 +17,12 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import gtk
-import os
-from cylc.gui.tailer import Tailer
 from cylc.gui.warning_dialog import warning_dialog
 import pango
 
 
 class logviewer(object):
-    def __init__(self, name, dirname, filename):
-        self.name = name
-        self.dirname = dirname
-        self.filename = filename
+    def __init__(self):
         self.t = None
 
         self.find_current = None
@@ -53,16 +48,6 @@ class logviewer(object):
         logbuffer = self.logview.get_buffer()
         s, e = logbuffer.get_bounds()
         logbuffer.delete(s, e)
-
-    def path(self):
-        if self.dirname and not os.path.isabs(self.filename):
-            return os.path.join(self.dirname, self.filename)
-        else:
-            return self.filename
-
-    def connect(self):
-        self.t = Tailer(self.logview, self.path())
-        self.t.start()
 
     def quit_w_e(self, w, e):
         self.t.stop()
@@ -163,7 +148,7 @@ class logviewer(object):
 
         self.vbox = gtk.VBox()
 
-        self.log_label = gtk.Label(self.path())
+        self.log_label = gtk.Label("PATH")
         self.log_label.modify_fg(gtk.STATE_NORMAL, gtk.gdk.color_parse("#00a"))
         self.vbox.pack_start(self.log_label, False)
 

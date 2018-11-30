@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -33,8 +33,8 @@ from cylc.gui.util import get_id_summary
 
 class DotUpdater(threading.Thread):
 
-    RIGHT_ARROW = u'\u25b7'  # Unicode enpty triangle facing right.
-    DOWN_ARROW = u'\u25bd'  # Unicode enpty triangle facing down.
+    RIGHT_ARROW = u'\u25b7'  # Unicode empty triangle facing right.
+    DOWN_ARROW = u'\u25bd'  # Unicode empty triangle facing down.
     INDENT = 5  # Number of spaces to indent nested items in transpose view.
 
     def __init__(self, cfg, updater, treeview, info_bar, theme, dot_size):

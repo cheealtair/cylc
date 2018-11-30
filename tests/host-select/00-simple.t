@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 # 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -17,6 +17,7 @@
 #-------------------------------------------------------------------------------
 # Test host selection
 . "$(dirname "$0")/test_header"
+set_test_remote
 set_test_number 3
 
 install_suite "${TEST_NAME_BASE}" "${TEST_NAME_BASE}"
@@ -26,5 +27,6 @@ suite_run_ok "${TEST_NAME_BASE}-run" \
 
 N_HOST_SELECT_CMDS="$(ls "${SUITE_RUN_DIR}/host-select-"* | wc -l)"
 run_ok "${TEST_NAME_BASE}-n-host-select-cmds" test "${N_HOST_SELECT_CMDS}" -eq 1
+purge_suite_remote "${CYLC_TEST_HOST}" "${SUITE_NAME}"
 purge_suite "${SUITE_NAME}"
 exit

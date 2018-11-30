@@ -2,7 +2,7 @@ runahead limit =
 hold after point = 
 max active cycle points = 3
 final cycle point constraints = 
-spawn to max active cycle points = False
+spawn to max active cycle points = 
 cycling mode = integer
 initial cycle point = 1
 initial cycle point constraints = 
@@ -10,6 +10,7 @@ final cycle point = 1
 [[dependencies]]
     [[[R1]]]
         graph = OPS:finish-all => VAR
+[[xtriggers]]
 [[queues]]
     [[[default]]]
         limit = 0

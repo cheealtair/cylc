@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -56,7 +56,7 @@ def get_stop_state_summary(lines):
         items = dict(p.split("=") for p in info.split(', '))
         state = items.get("status")
         if state == 'submitting':
-            # backward compabitility for state dumps generated prior to #787
+            # backward compatibility for state dumps generated prior to #787
             state = TASK_STATUS_READY
         task_summary[task_id].update({"state": state})
         task_summary[task_id].update({"spawned": items.get("spawned")})

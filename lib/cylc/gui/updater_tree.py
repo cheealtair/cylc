@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,6 +21,7 @@ import gobject
 import itertools
 import threading
 from time import time, sleep
+
 
 from cylc.gui.dot_maker import DotMaker
 from cylc.gui.util import get_id_summary
@@ -245,18 +246,21 @@ class TreeUpdater(threading.Thread):
                         t_info[dt] = summary[id_][dt]
 
                     # Compute percent progress.
+                    t_info['progress'] = 0
                     if (isinstance(tstart, float) and (
                             isinstance(meant, float) or
                             isinstance(meant, int))):
                         tetc_unix = tstart + meant
                         tnow = time()
-                        if tnow > tetc_unix:
+                        if tstart > tnow:
+                            # Reportably possible via interaction with
+                            # cylc reset.
+                            t_info['progress'] = 0
+                        elif tnow > tetc_unix:
                             t_info['progress'] = 100
-                        else:
+                        elif meant != 0:
                             t_info['progress'] = int(
-                                100 * (tnow - tstart) / (tetc_unix - tstart))
-                    else:
-                        t_info['progress'] = 0
+                                100 * (tnow - tstart) / (meant))
 
                     if (t_info['finished_time_string'] is None and
                             isinstance(tstart, float) and
@@ -398,7 +402,7 @@ class TreeUpdater(threading.Thread):
                 try:
                     p_data = new_fam_data[point_string]["root"]
                 except KeyError:
-                    p_data = [None] * 11
+                    p_data = [None] * 10 + [-1]
                 p_path = (i,)
                 p_row_id = (point_string, point_string)
                 p_data = list(p_row_id) + p_data
@@ -435,7 +439,7 @@ class TreeUpdater(threading.Thread):
                     f_iter = p_iter
                     f_path = p_path
                     fam = point_string
-                    for i, fam in enumerate(named_path[:-1]):
+                    for j, fam in enumerate(named_path[:-1]):
                         # Construct family nesting for this task.
                         if fam in family_iters:
                             # Family already in tree
@@ -447,8 +451,8 @@ class TreeUpdater(threading.Thread):
                                 f_data = new_fam_data[point_string][fam]
                             except KeyError:
                                 f_data = [None] * 7
-                            if i > 0:
-                                parent_fam = named_path[i - 1]
+                            if j > 0:
+                                parent_fam = named_path[j - 1]
                             else:
                                 # point_string is the implicit parent here.
                                 parent_fam = point_string

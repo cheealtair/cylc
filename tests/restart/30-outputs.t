@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 # 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -26,22 +26,20 @@ suite_run_fail "${TEST_NAME_BASE}-run" cylc run --no-detach "${SUITE_NAME}"
 if which sqlite3 > '/dev/null'; then
     sqlite3 "${SUITE_RUN_DIR}/log/db" 'SELECT outputs FROM task_outputs' \
         >'sqlite3.out'
-    cmp_ok 'sqlite3.out' <<<'hello=hello'
+    cmp_json_ok 'sqlite3.out' 'sqlite3.out' <<<'{"hello": "hello"}'
 else
     skip 1 'sqlite3 not installed?'
 fi
 suite_run_fail "${TEST_NAME_BASE}-restart-1" \
     cylc restart --no-detach "${SUITE_NAME}"
-sed -i 's/#\(startup handler\)/\1/' 'suite.rc'
+sed -i 's/#\(stalled handler\)/\1/; s/\(abort on stalled\)/#\1/' 'suite.rc'
 suite_run_ok "${TEST_NAME_BASE}-restart-2" \
     cylc restart --debug --no-detach --reference-test "${SUITE_NAME}"
 if which sqlite3 > '/dev/null'; then
     sqlite3 "${SUITE_RUN_DIR}/log/db" 'SELECT outputs FROM task_outputs' \
         >'sqlite3.out'
-    cmp_ok 'sqlite3.out' <<'__OUT__'
-greet=greeting
-hello=hello
-__OUT__
+    cmp_json_ok 'sqlite3.out' 'sqlite3.out' \
+        <<<'{"hello": "hello", "greet": "greeting"}'
 else
     skip 1 'sqlite3 not installed?'
 fi

@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -29,14 +29,14 @@ to running remote suites (whose passphrase you have installed) you must
 currently use --host and/or --user on the gcylc command line.
 
 Available task state color themes are shown under the View menu. To customize
-themes copy $CYLC_DIR/conf/gcylcrc/gcylc.rc.eg to $HOME/.cylc/gcylc.rc and
-follow the instructions in the file.
+themes copy <cylc-dir>/etc/gcylc.rc.eg to ~/.cylc/gcylc.rc and follow the
+instructions in the file.
 
 To see current configuration settings use "cylc get-gui-config".
 
 In the graph view, View -> Options -> "Write Graph Frames" writes .dot graph
 files to the suite share directory (locally, for a remote suite). These can
-be processed into a movie by \$CYLC_DIR/dev/bin/live-graph-movie.sh=."""
+be processed into a movie by $CYLC_DIR/dev/bin/live-graph-movie.sh=."""
 
 import sys
 if '--use-ssh' in sys.argv[1:]:

@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -27,6 +27,8 @@ Multiple items can be specified at once."""
 
 import sys
 from optparse import OptionParser
+
+from cylc.cfgspec.gcylc import GcylcConfig
 import cylc.flags
 
 
@@ -63,8 +65,8 @@ def main():
         parser.error("ERROR: wrong number of arguments")
 
     # Import gcfg here to avoid aborting before command help is printed.
-    from cylc.cfgspec.gcylc import gcfg
-    gcfg.idump(options.item, sparse=options.sparse, pnative=options.pnative)
+    GcylcConfig.get_inst().idump(
+        options.item, sparse=options.sparse, pnative=options.pnative)
 
 
 if __name__ == "__main__":

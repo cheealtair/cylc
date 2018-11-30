@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@
 # Test authentication - privilege 'identity'.
 
 . $(dirname $0)/test_header
-set_test_number 14
+set_test_number 17
 
 install_suite "${TEST_NAME_BASE}" basic
 
@@ -35,31 +35,30 @@ unset CYLC_CONF_PATH
 SRV_D="$(cylc get-global-config --print-run-dir)/${SUITE_NAME}/.service"
 HOST="$(sed -n 's/^CYLC_SUITE_HOST=//p' "${SRV_D}/contact")"
 PORT="$(sed -n 's/^CYLC_SUITE_PORT=//p' "${SRV_D}/contact")"
-run_ok "${TEST_NAME_BASE}-curl-anon" \
-    env no_proxy=* curl -v --cacert "${SRV_D}/ssl.cert" \
-    --digest -u 'anon:the quick brown fox' \
-    "https://${HOST}:${PORT}/identify"
-run_ok "${TEST_NAME_BASE}-curl-anon.stdout" \
-    grep -qF "\"name\": \"${SUITE_NAME}\"" "${TEST_NAME_BASE}-curl-anon.stdout"
-run_ok "${TEST_NAME_BASE}-curl-cylc" \
-    env no_proxy=* curl -v --cacert "${SRV_D}/ssl.cert" \
-    --digest -u "cylc:$(<"${SRV_D}/passphrase")" \
-    "https://${HOST}:${PORT}/identify"
-run_ok "${TEST_NAME_BASE}-curl-cylc.stdout" \
-    grep -qF "\"name\": \"${SUITE_NAME}\"" "${TEST_NAME_BASE}-curl-cylc.stdout"
-run_ok "${TEST_NAME_BASE}-curl-cylc-bad-ping-task" \
-    env no_proxy=* curl -v --cacert "${SRV_D}/ssl.cert" \
-    --digest -u "cylc:$(<"${SRV_D}/passphrase")" \
-    "https://${HOST}:${PORT}/ping_task?task_id=foo.1&exists_only=Truer"
-run_ok "${TEST_NAME_BASE}-curl-cylc-bad-ping-task.stdout" \
-    grep -qF "HTTPError: (400, u'Bad argument value: exists_only=Truer')" \
-    "${TEST_NAME_BASE}-curl-cylc-bad-ping-task.stdout"
-run_ok "${TEST_NAME_BASE}-curl-cylc-ping-task" \
-    env no_proxy=* curl -v --cacert "${SRV_D}/ssl.cert" \
-    --digest -u "cylc:$(<"${SRV_D}/passphrase")" \
-    "https://${HOST}:${PORT}/ping_task?task_id=foo.1&exists_only=True"
-echo >>"${TEST_NAME_BASE}-curl-cylc-ping-task.stdout"  # add new line
-cmp_ok "${TEST_NAME_BASE}-curl-cylc-ping-task.stdout" <<<'[true, "task found"]'
+run_ok "${TEST_NAME_BASE}-client-anon" \
+    cylc client -n --host="${HOST}" --port="${PORT}" 'identify'
+run_ok "${TEST_NAME_BASE}-client-anon.stdout" \
+    grep -qF "\"name\": \"${SUITE_NAME}\"" "${TEST_NAME_BASE}-client-anon.stdout"
+run_ok "${TEST_NAME_BASE}-client-cylc" \
+    cylc client -n --host="${HOST}" --port="${PORT}" 'identify' "${SUITE_NAME}"
+run_ok "${TEST_NAME_BASE}-client-cylc.stdout" \
+    grep -qF "\"name\": \"${SUITE_NAME}\"" "${TEST_NAME_BASE}-client-cylc.stdout"
+run_fail "${TEST_NAME_BASE}-client-cylc-bad-ping-task" \
+    cylc client 'get_info' "${SUITE_NAME}" <<'__JSON__'
+{"command": "ping_task", "task_id": "foo.1", "exists_only": "Truer"}
+__JSON__
+grep_ok 'HTTP.*Error.*400' "${TEST_NAME_BASE}-client-cylc-bad-ping-task.stderr"
+run_ok "${TEST_NAME_BASE}-client-cylc-ping-task" \
+    cylc client 'get_info' "${SUITE_NAME}" <<'__JSON__'
+{"command": "ping_task", "task_id": "foo.1", "exists_only": "True"}
+__JSON__
+echo >>"${TEST_NAME_BASE}-client-cylc-ping-task.stdout"  # add new line
+cmp_ok "${TEST_NAME_BASE}-client-cylc-ping-task.stdout" <<'__JSON__'
+[
+    true, 
+    "task found"
+]
+__JSON__
 
 # Wait for first task 'foo' to fail.
 cylc suite-state "${SUITE_NAME}" --task=foo --status=failed --point=1 \
@@ -68,12 +67,44 @@ cylc suite-state "${SUITE_NAME}" --task=foo --status=failed --point=1 \
 # Disable the suite passphrase (to leave us with public access privilege).
 mv "${SRV_D}/passphrase" "${SRV_D}/passphrase.DIS"
 
-# Check scan output.
+# Check scan --full output.
 cylc scan --comms-timeout=5 -fb -n "${SUITE_NAME}" 'localhost' \
-    >'scan.out' 2>'/dev/null'
-cmp_ok scan.out << __END__
+    >'scan-f.out' 2>'/dev/null'
+cmp_ok scan-f.out << __END__
 ${SUITE_NAME} ${USER}@localhost:${PORT}
    (description and state totals withheld)
+__END__
+
+# Check scan --describe output.
+cylc scan --comms-timeout=5 -db -n "${SUITE_NAME}" 'localhost' \
+    >'scan-d.out' 2>'/dev/null'
+cmp_ok scan-d.out << __END__
+${SUITE_NAME} ${USER}@localhost:${PORT}
+   (description and state totals withheld)
+__END__
+
+# Check scan --raw output.
+cylc scan --comms-timeout=5 -rb -n "${SUITE_NAME}" 'localhost' \
+    >'scan-r.out' 2>'/dev/null'
+cmp_ok scan-r.out << __END__
+${SUITE_NAME}|${USER}|localhost|port|${PORT}
+__END__
+
+# Check scan --json output.
+cylc scan --comms-timeout=5 -jb -n "${SUITE_NAME}" 'localhost' \
+    >'scan-j.out' 2>'/dev/null'
+cmp_json_ok 'scan-j.out' 'scan-j.out' << __END__
+[
+    [
+        "localhost",
+        ${PORT},
+        {
+            "owner":"${USER}",
+            "version": "$(cylc version)",
+            "name":"${SUITE_NAME}"
+        }
+    ]
+]
 __END__
 
 # "cylc show" should be denied.

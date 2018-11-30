@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@
 
 import sys
 
-from cylc.cfgspec.globalcfg import GLOBAL_CFG
+from cylc.cfgspec.glbl_cfg import glbl_cfg
 
 
 def prompt(question, force=False, gui=False, no_force=False, no_abort=False,
@@ -29,7 +29,7 @@ def prompt(question, force=False, gui=False, no_force=False, no_abort=False,
     If force is True don't prompt, just return immediately.
 
     """
-    if (force or GLOBAL_CFG.get(['disable interactive command prompts'])) and (
+    if (force or glbl_cfg().get(['disable interactive command prompts'])) and (
             not no_force):
         return True
     if gui:

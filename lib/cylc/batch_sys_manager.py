@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -27,12 +27,6 @@ system handler logic.
 
 Each batch system handler class should instantiate with no argument, and may
 have the following constants and methods:
-
-batch_sys.filter_poll_output(out, job_id) => boolean
-    * If this method is available, it will be called after the batch system's
-      poll command is called and returns zero. The method should read the
-      output to see if job_id is still alive in the batch system, and return
-      True if so.
 
 batch_sys.filter_poll_many_output(out) => job_ids
     * Called after the batch system's poll many command. The method should read
@@ -69,18 +63,31 @@ batch_sys.submit(job_file_path) => ret_code, out, err
       beyond just running a system or shell command. See also
       "batch_sys.SUBMIT_CMD".
 
-batch_sys.SHOULD_KILL_PROC_GROUP
-    * A boolean to indicate whether it is necessary to kill a job by sending
-      a signal to its Unix process group.
-
-batch_sys.SHOULD_POLL_PROC_GROUP
-    * A boolean to indicate whether it is necessary to poll a job by its PID
-      as well as the job ID.
+batch_sys.manip_job_id(job_id) => job_id
+    * Modify the job ID that is returned by the job poll command.
 
 batch_sys.KILL_CMD_TMPL
     *  A Python string template for getting the batch system command to remove
        and terminate a job ID. The command is formed using the logic:
            batch_sys.KILL_CMD_TMPL % {"job_id": job_id}
+
+batch_sys.POLL_CANT_CONNECT_ERR
+    * A string containing an error message. If this is defined, when a poll
+      command returns a non-zero return code and its STDERR contains this
+      string, then the poll result will not be trusted, because it is assumed
+      that the batch system is currently unavailable. Jobs submitted to the
+      batch system will be assumed OK until we are able to connect to the batch
+      system again.
+
+batch_sys.SHOULD_KILL_PROC_GROUP
+    * A boolean to indicate whether it is necessary to kill a job by sending
+      a signal to its Unix process group. This boolean also indicates that
+      a job submitted via this batch system will physically run on the same
+      host it is submitted to.
+
+batch_sys.SHOULD_POLL_PROC_GROUP
+    * A boolean to indicate whether it is necessary to poll a job by its PID
+      as well as the job ID.
 
 batch_sys.REC_ID_FROM_SUBMIT_ERR
 batch_sys.REC_ID_FROM_SUBMIT_OUT
@@ -101,6 +108,7 @@ batch_sys.SUBMIT_CMD_TMPL
 """
 
 import os
+import json
 import shlex
 from shutil import rmtree
 from signal import SIGKILL
@@ -108,28 +116,42 @@ import stat
 from subprocess import Popen, PIPE
 import sys
 import traceback
+
+
+from parsec.OrderedDict import OrderedDict
+
+
 from cylc.mkdir_p import mkdir_p
-from cylc.task_message import TaskMessage
+from cylc.task_message import (
+    CYLC_JOB_PID, CYLC_JOB_INIT_TIME, CYLC_JOB_EXIT_TIME, CYLC_JOB_EXIT,
+    CYLC_MESSAGE)
 from cylc.task_outputs import TASK_OUTPUT_SUCCEEDED
+from cylc.task_job_logs import (
+    JOB_LOG_JOB, JOB_LOG_OUT, JOB_LOG_ERR, JOB_LOG_STATUS)
 from cylc.wallclock import get_current_time_string
 
 
 class JobPollContext(object):
-    """Context object for a job poll.
+    """Context object for a job poll."""
+    CONTEXT_ATTRIBUTES = (
+        'job_log_dir',  # cycle/task/submit_num
+        'batch_sys_name',  # batch system name
+        'batch_sys_job_id',  # job id in batch system
+        'batch_sys_exit_polled',  # 0 for false, 1 for true
+        'run_status',  # 0 for success, 1 for failure
+        'run_signal',  # signal received on run failure
+        'time_submit_exit',  # submit (exit) time
+        'time_run',  # run start time
+        'time_run_exit',  # run exit time
+        'batch_sys_call_no_lines',  # number of lines in batch sys call stdout
+    )
 
-    0 ctx.job_log_dir -- cycle/task/submit_num
-    1 ctx.batch_sys_name -- batch system name
-    2 ctx.batch_sys_job_id -- job ID in batch system
-    3 ctx.batch_sys_exit_polled -- 0 for false, 1 for true
-    4 ctx.run_status -- 0 for success, 1 for failure
-    5 ctx.run_signal -- signal received on run failure
-    6 ctx.time_submit_exit -- submit (exit) time
-    7 ctx.time_run -- run start time
-    8 ctx.time_run_exit -- run exit time
+    __slots__ = CONTEXT_ATTRIBUTES + (
+        'pid',
+        'messages'
+    )
 
-    """
-
-    def __init__(self, job_log_dir):
+    def __init__(self, job_log_dir, **attrs):
         self.job_log_dir = job_log_dir
         self.batch_sys_name = None
         self.batch_sys_job_id = None
@@ -140,26 +162,25 @@ class JobPollContext(object):
         self.time_submit_exit = None
         self.time_run = None
         self.time_run_exit = None
+        self.batch_sys_call_no_lines = None
         self.messages = []
+
+        if attrs:
+            for key, value in attrs.items():
+                if key in self.CONTEXT_ATTRIBUTES:
+                    setattr(self, key, value)
+                else:
+                    raise ValueError('Invalid kwarg "%s"' % key)
 
     def get_summary_str(self):
         """Return the poll context as a summary string delimited by "|"."""
-        items = []
-        for item in [
-                self.job_log_dir,
-                self.batch_sys_name,
-                self.batch_sys_job_id,
-                self.batch_sys_exit_polled,
-                self.run_status,
-                self.run_signal,
-                self.time_submit_exit,
-                self.time_run,
-                self.time_run_exit]:
-            if item is None:
-                items.append("")
-            else:
-                items.append(str(item))
-        return "|".join(items)
+        ret = OrderedDict()
+        for key in self.CONTEXT_ATTRIBUTES:
+            value = getattr(self, key)
+            if key == 'job_log_dir' or value is None:
+                continue
+            ret[key] = value
+        return '%s|%s' % (self.job_log_dir, json.dumps(ret))
 
 
 class BatchSysManager(object):
@@ -173,7 +194,6 @@ class BatchSysManager(object):
     CYLC_BATCH_SYS_JOB_ID = "CYLC_BATCH_SYS_JOB_ID"
     CYLC_BATCH_SYS_JOB_SUBMIT_TIME = "CYLC_BATCH_SYS_JOB_SUBMIT_TIME"
     CYLC_BATCH_SYS_EXIT_POLLED = "CYLC_BATCH_SYS_EXIT_POLLED"
-    JOB_FILE_BASE = "job"
     LINE_PREFIX_CYLC_DIR = "export CYLC_DIR="
     LINE_PREFIX_BATCH_SYS_NAME = "# Job submit method: "
     LINE_PREFIX_BATCH_SUBMIT_CMD_TMPL = "# Job submit command template: "
@@ -232,6 +252,11 @@ class BatchSysManager(object):
         if hasattr(batch_sys, "get_vacation_signal"):
             return batch_sys.get_vacation_signal(job_conf)
 
+    def is_job_local_to_host(self, batch_sys_name):
+        """Return True if batch system runs jobs local to the submit host."""
+        return getattr(
+            self._get_sys(batch_sys_name), "SHOULD_KILL_PROC_GROUP", False)
+
     def jobs_kill(self, job_log_root, job_log_dirs):
         """Kill multiple jobs.
 
@@ -249,7 +274,7 @@ class BatchSysManager(object):
         now = get_current_time_string()
         for job_log_dir in job_log_dirs:
             ret_code, err = self.job_kill(
-                os.path.join(job_log_root, job_log_dir, "job.status"))
+                os.path.join(job_log_root, job_log_dir, JOB_LOG_STATUS))
             sys.stdout.write("%s%s|%s|%d\n" % (
                 self.OUT_PREFIX_SUMMARY, now, job_log_dir, ret_code))
             # Note: Print STDERR to STDOUT may look a bit strange, but it
@@ -282,10 +307,12 @@ class BatchSysManager(object):
             ctx_list.append(ctx)
 
             if not ctx.batch_sys_name or not ctx.batch_sys_job_id:
+                # Lost batch system information for some reason.
+                # Mark the job as if it is no longer in the batch system.
+                ctx.batch_sys_exit_polled = 1
                 sys.stderr.write(
-                    "%s/job.status: incomplete batch system info\n" % (
-                        ctx.job_log_dir))
-                continue
+                    "%s/%s: incomplete batch system info\n" % (
+                        ctx.job_log_dir, JOB_LOG_STATUS))
 
             # We can trust:
             # * Jobs previously polled to have exited the batch system.
@@ -315,11 +342,14 @@ class BatchSysManager(object):
                 cur_time_str,
                 ctx.get_summary_str()))
 
-    def jobs_submit(self, job_log_root, job_log_dirs, remote_mode=False):
+    def jobs_submit(self, job_log_root, job_log_dirs, remote_mode=False,
+                    utc_mode=False):
         """Submit multiple jobs.
 
         job_log_root -- The log/job/ sub-directory of the suite.
         job_log_dirs -- A list containing point/name/submit_num for task jobs.
+        remote_mode -- am I running on the remote job host?
+        utc_mode -- is the suite running in UTC mode?
 
         """
         if "$" in job_log_root:
@@ -330,10 +360,10 @@ class BatchSysManager(object):
             items = self._jobs_submit_prep_by_stdin(job_log_root, job_log_dirs)
         else:
             items = self._jobs_submit_prep_by_args(job_log_root, job_log_dirs)
-        now = get_current_time_string()
+        now = get_current_time_string(override_use_utc=utc_mode)
         for job_log_dir, batch_sys_name, submit_opts in items:
             job_file_path = os.path.join(
-                job_log_root, job_log_dir, self.JOB_FILE_BASE)
+                job_log_root, job_log_dir, JOB_LOG_JOB)
             if not batch_sys_name:
                 sys.stdout.write("%s%s|%s|1|\n" % (
                     self.OUT_PREFIX_SUMMARY, now, job_log_dir))
@@ -366,12 +396,13 @@ class BatchSysManager(object):
                     batch_sys = self._get_sys(line.strip().split("=", 1)[1])
                     break
             else:
-                return (
-                    1, "Cannot determine batch system from 'job.status' file")
+                return (1,
+                        "Cannot determine batch system from %s file" % (
+                            JOB_LOG_STATUS))
             st_file.seek(0, 0)  # rewind
             if getattr(batch_sys, "SHOULD_KILL_PROC_GROUP", False):
                 for line in st_file:
-                    if line.startswith(TaskMessage.CYLC_JOB_PID + "="):
+                    if line.startswith(CYLC_JOB_PID + "="):
                         pid = line.strip().split("=", 1)[1]
                         try:
                             os.killpg(os.getpgid(int(pid)), SIGKILL)
@@ -400,7 +431,8 @@ class BatchSysManager(object):
                         return (1, str(exc))
                     else:
                         return (proc.wait(), proc.communicate()[1])
-            return (1, "Cannot determine batch job ID from 'job.status' file")
+            return (1, "Cannot determine batch job ID from %s file" % (
+                       JOB_LOG_STATUS))
         except IOError as exc:
             return (1, str(exc))
 
@@ -448,6 +480,8 @@ class BatchSysManager(object):
                 match = rec_id.match(line)
                 if match:
                     job_id = match.group("id")
+                    if hasattr(batch_sys, "manip_job_id"):
+                        job_id = batch_sys.manip_job_id(job_id)
                     job_status_file = open(st_file_path, "a")
                     job_status_file.write("%s=%s\n" % (
                         self.CYLC_BATCH_SYS_JOB_ID, job_id))
@@ -465,7 +499,7 @@ class BatchSysManager(object):
         ctx = JobPollContext(job_log_dir)
         try:
             handle = open(os.path.join(
-                job_log_root, ctx.job_log_dir, "job.status"))
+                job_log_root, ctx.job_log_dir, JOB_LOG_STATUS))
         except IOError as exc:
             sys.stderr.write(str(exc) + "\n")
             return
@@ -479,21 +513,21 @@ class BatchSysManager(object):
                 ctx.batch_sys_job_id = value
             elif key == self.CYLC_BATCH_SYS_EXIT_POLLED:
                 ctx.batch_sys_exit_polled = 1
-            elif key == TaskMessage.CYLC_JOB_PID:
+            elif key == CYLC_JOB_PID:
                 ctx.pid = value
             elif key == self.CYLC_BATCH_SYS_JOB_SUBMIT_TIME:
                 ctx.time_submit_exit = value
-            elif key == TaskMessage.CYLC_JOB_INIT_TIME:
+            elif key == CYLC_JOB_INIT_TIME:
                 ctx.time_run = value
-            elif key == TaskMessage.CYLC_JOB_EXIT_TIME:
+            elif key == CYLC_JOB_EXIT_TIME:
                 ctx.time_run_exit = value
-            elif key == TaskMessage.CYLC_JOB_EXIT:
+            elif key == CYLC_JOB_EXIT:
                 if value == TASK_OUTPUT_SUCCEEDED.upper():
                     ctx.run_status = 0
                 else:
                     ctx.run_status = 1
                     ctx.run_signal = value
-            elif key == TaskMessage.CYLC_MESSAGE:
+            elif key == CYLC_MESSAGE:
                 ctx.messages.append(value)
         handle.close()
 
@@ -510,6 +544,7 @@ class BatchSysManager(object):
             exp_pids = [ctx.pid for ctx in my_ctx_list if ctx.pid is not None]
             bad_pids.extend(exp_pids)
             items.append([self._get_sys("background"), exp_pids, bad_pids])
+        debug_messages = []
         for batch_sys, exp_ids, bad_ids in items:
             if hasattr(batch_sys, "get_poll_many_cmd"):
                 # Some poll commands may not be as simple
@@ -527,10 +562,17 @@ class BatchSysManager(object):
                     exc.filename = cmd[0]
                 sys.stderr.write(str(exc) + "\n")
                 return
-            proc.wait()
+            ret_code = proc.wait()
             out, err = proc.communicate()
+            debug_messages.append('%s - %s' % (
+                batch_sys, len(out.split('\n'))))
             sys.stderr.write(err)
-            if hasattr(batch_sys, "filter_poll_many_output"):
+            if (ret_code and hasattr(batch_sys, "POLL_CANT_CONNECT_ERR") and
+                    batch_sys.POLL_CANT_CONNECT_ERR in err):
+                # Poll command failed because it cannot connect to batch system
+                # Assume jobs are still healthy until the batch system is back.
+                bad_ids[:] = []
+            elif hasattr(batch_sys, "filter_poll_many_output"):
                 # Allow custom filter
                 for id_ in batch_sys.filter_poll_many_output(out):
                     try:
@@ -552,19 +594,22 @@ class BatchSysManager(object):
                         except ValueError:
                             pass
 
+        debug_flag = False
         for ctx in my_ctx_list:
             ctx.batch_sys_exit_polled = int(
                 ctx.batch_sys_job_id in bad_job_ids)
             # Exited batch system, but process still running
             # This can happen to jobs in some "at" implementation
-            if (ctx.batch_sys_exit_polled and
-                    ctx.pid in exp_pids and ctx.pid not in bad_pids):
-                ctx.batch_sys_exit_polled = 0
+            if ctx.batch_sys_exit_polled and ctx.pid in exp_pids:
+                if ctx.pid not in bad_pids:
+                    ctx.batch_sys_exit_polled = 0
+                else:
+                    debug_flag = True
             # Add information to "job.status"
             if ctx.batch_sys_exit_polled:
                 try:
                     handle = open(os.path.join(
-                        job_log_root, ctx.job_log_dir, "job.status"), "a")
+                        job_log_root, ctx.job_log_dir, JOB_LOG_STATUS), "a")
                     handle.write("%s=%s\n" % (
                         self.CYLC_BATCH_SYS_EXIT_POLLED,
                         get_current_time_string()))
@@ -572,13 +617,16 @@ class BatchSysManager(object):
                 except IOError as exc:
                     sys.stderr.write(str(exc) + "\n")
 
+        if debug_flag:
+            ctx.batch_sys_call_no_lines = ', '.join(debug_messages)
+
     def _job_submit_impl(
             self, job_file_path, batch_sys_name, submit_opts):
         """Helper for self.jobs_submit() and self.job_submit()."""
 
         # Create NN symbolic link, if necessary
         self._create_nn(job_file_path)
-        for name in "job.err", "job.out":
+        for name in JOB_LOG_ERR, JOB_LOG_OUT:
             try:
                 os.unlink(os.path.join(job_file_path, name))
             except OSError:

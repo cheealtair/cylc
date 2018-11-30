@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -18,17 +18,8 @@
 
 """Some global flags used in cylc"""
 
-# Set iflag = True to simulate an update of the suite state summary
-# structure accessed by gcylc and commands.
-iflag = False
-
 # verbose mode
 verbose = False
 
 # debug mode
 debug = False
-
-# TODO - run mode should be a flag
-
-# utc mode
-utc = False

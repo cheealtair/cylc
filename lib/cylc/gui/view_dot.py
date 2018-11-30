@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -27,7 +27,7 @@ class ControlLED(object):
 LED suite control interface.
     """
     def __init__(self, cfg, updater, theme, dot_size, info_bar,
-                 get_right_click_menu, log_colors, insert_task_popup):
+                 get_right_click_menu, insert_task_popup):
 
         self.cfg = cfg
         self.updater = updater
@@ -35,7 +35,6 @@ LED suite control interface.
         self.dot_size = dot_size
         self.info_bar = info_bar
         self.get_right_click_menu = get_right_click_menu
-        self.log_colors = log_colors
         self.insert_task_popup = insert_task_popup
 
         self.t = None

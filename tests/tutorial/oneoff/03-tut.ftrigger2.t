@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 # 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -31,6 +31,6 @@ TEST_NAME=$TEST_NAME_BASE-val
 run_ok $TEST_NAME cylc validate $SUITE_NAME
 #-------------------------------------------------------------------------------
 TEST_NAME=$TEST_NAME_BASE-run
-suite_run_ok $TEST_NAME cylc run --reference-test --debug --no-detach $SUITE_NAME
+suite_run_ok $TEST_NAME cylc run --reference-test --no-detach --debug $SUITE_NAME
 #-------------------------------------------------------------------------------
 purge_suite $SUITE_NAME

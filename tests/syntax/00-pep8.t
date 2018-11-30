@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 # 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -24,7 +24,13 @@ fi
 
 set_test_number 3
 
-run_ok "${TEST_NAME_BASE}" pep8 --ignore=E402 \
+# Ignores:
+# E402 module level import not at top of file:
+# - To allow import on demand for expensive modules.
+# W503 line break before binary operator
+# W504 line break after binary operator
+# - PEP8 allows both, line break before binary preferred for new code.
+run_ok "${TEST_NAME_BASE}" pep8 --ignore=E402,W503,W504 \
     "${CYLC_DIR}/lib/cylc" \
     "${CYLC_DIR}/lib/isodatetime" \
     "${CYLC_DIR}/lib/Jinja2Filters"/*.py \

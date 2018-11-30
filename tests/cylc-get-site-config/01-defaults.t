@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 # 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -20,9 +20,6 @@
 . "$(dirname "$0")/test_header"
 
 set_test_number 1
-
-# Configure a new site config file.
-create_test_globalrc
 
 # Empty it (of non-default global-tests.rc items, which would then be retrieved
 # by "cylc get-global-config" below).

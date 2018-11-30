@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@ a_hbar = '-'
 a_vbar = '|'
 a_tee = a_vbar + a_hbar
 a_trm = '`' + a_hbar
-a_tee_re = '\|' + a_hbar
+a_tee_re = r'\|' + a_hbar
 
 # Unicode box-printing characters
 u_hbar = u'\u2500'

@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -30,7 +30,7 @@ file and User Guide. This must be done on suite and task hosts. Users then get
 the latest installed version by default, or (like tasks) a particular version
 if $CYLC_VERSION is defined.
 
-User -v/--verbose to see the command invoked to determine the remote version
+Use -v/--verbose to see the command invoked to determine the remote version
 (all remote cylc command invocations will be of the same form, which may be
 site dependent -- see cylc global config documentation."""
 
@@ -43,7 +43,7 @@ import cylc.flags
 from cylc.option_parsers import CylcOptionParser as COP
 from cylc.version import CYLC_VERSION
 from cylc.config import SuiteConfig
-from cylc.mp_pool import SuiteProcPool
+from cylc.subprocpool import SuiteProcPool
 from cylc.suite_srv_files_mgr import SuiteSrvFilesManager
 from cylc.task_remote_mgr import TaskRemoteMgr
 from cylc.templatevars import load_template_vars
@@ -84,7 +84,7 @@ def main():
                 account_set.remove((user, host_str))
                 accounts.append((user, res))
         if account_set:
-            task_remote_mgr.proc_pool.handle_results_async()
+            task_remote_mgr.proc_pool.process()
             sleep(1.0)
 
     # Interrogate the each remote account with CYLC_VERSION set to our version.
@@ -92,7 +92,7 @@ def main():
     #   cylc version --host=HOST --user=USER
     # but this command only exists for version > 6.3.0.
     # So for the moment generate an actual remote invocation command string for
-    # "cylc -v".
+    # "cylc --version".
 
     # (save verbose flag as gets reset in remrun)
     verbose = cylc.flags.verbose

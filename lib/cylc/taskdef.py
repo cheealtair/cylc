@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -47,7 +47,8 @@ class TaskDef(object):
         "intercycle_offsets", "sequential", "is_coldstart",
         "suite_polling_cfg", "clocktrigger_offset", "expiration_offset",
         "namespace_hierarchy", "dependencies", "outputs", "param_var",
-        "external_triggers", "name", "elapsed_times"]
+        "external_triggers", "xtrig_labels", "xclock_label",
+        "name", "elapsed_times"]
 
     # Store the elapsed times for a maximum of 10 cycles
     MAX_LEN_ELAPSED_TIMES = 10
@@ -77,6 +78,12 @@ class TaskDef(object):
         self.outputs = []
         self.param_var = {}
         self.external_triggers = []
+        self.xtrig_labels = set()
+        self.xclock_label = None
+        # Note a task can only have one clock xtrigger - if it depends on
+        # several we just keep the label of the one with the largest offset
+        # (this is determined and set during suite config parsing, to avoid
+        # storing the offset here in the taskdef).
 
         self.name = name
         self.elapsed_times = deque(maxlen=self.MAX_LEN_ELAPSED_TIMES)
@@ -101,10 +108,7 @@ class TaskDef(object):
 
     def describe(self):
         """Return title and description of the current task."""
-        info = {}
-        for item in 'title', 'description':
-            info[item] = self.rtconfig['meta'][item]
-        return info
+        return self.rtconfig['meta']
 
     def check_for_explicit_cycling(self):
         """Check for explicitly somewhere.

@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -51,8 +51,6 @@ suite_run_ok "${TEST_NAME_BASE}-run" \
 
 LOGD="$(cylc get-global-config --print-run-dir)/${SUITE_NAME}/log/job/1/foo"
 grep_ok '#PBS -l walltime=70' "${LOGD}/01/job"
-#grep_ok 'CYLC_JOB_EXIT=EXIT' "${LOGD}/01/job.status"
-#grep_ok 'CYLC_JOB_EXIT=SUCCEEDED' "${LOGD}/02/job.status"
 
 if [[ "${CYLC_TEST_BATCH_TASK_HOST}" != 'localhost' ]]; then
     purge_suite_remote "${CYLC_TEST_BATCH_TASK_HOST}" "${SUITE_NAME}"

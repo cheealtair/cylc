@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -23,7 +23,7 @@ cat >'suite.rc' <<'__SUITE_RC__'
     initial cycle point = 20200202
     final cycle point = 20300303
     [[special tasks]]
-        clock-triggered = t-1, t+1, t%1, t@1
+        clock-trigger = t-1, t+1, t%1, t@1
     [[dependencies]]
         [[[P1D]]]
             graph = """

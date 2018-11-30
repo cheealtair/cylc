@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -15,272 +15,242 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
-"Cylc site and user configuration file spec."
+"""Cylc site and user configuration file spec."""
 
-import os
-import sys
-import re
 import atexit
+import os
+import re
 import shutil
 from tempfile import mkdtemp
-from parsec.config import config
-from parsec.validate import validator as vdr
-from parsec.validate import coercers
+
+from parsec.config import ParsecConfig
 from parsec import ParsecError
 from parsec.upgrade import upgrader, converter
+
+from cylc import LOG
+from cylc.cfgvalidate import (
+    cylc_config_validate, CylcConfigValidator as VDR, DurationFloat)
 from cylc.hostuserutil import is_remote_user
-from cylc.envvar import expandvars
 from cylc.mkdir_p import mkdir_p
-import cylc.flags
-from cylc.cfgspec.utils import (
-    coerce_interval, coerce_interval_list, DurationFloat)
 from cylc.network import PRIVILEGE_LEVELS, PRIV_STATE_TOTALS, PRIV_SHUTDOWN
+from cylc.version import CYLC_VERSION
 
-coercers['interval'] = coerce_interval
-coercers['interval_list'] = coerce_interval_list
-
+# Nested dict of spec items.
+# Spec value is [value_type, default, allowed_2, allowed_3, ...]
+# where:
+# - value_type: value type (compulsory).
+# - default: the default value (optional).
+# - allowed_2, ...: the only other allowed values of this setting (optional).
 SPEC = {
-    'process pool size': vdr(vtype='integer', default=4),
-    'temporary directory': vdr(vtype='string'),
-    'state dump rolling archive length': vdr(
-        vtype='integer', default=10),
-    'disable interactive command prompts': vdr(vtype='boolean', default=True),
-    'enable run directory housekeeping': vdr(vtype='boolean', default=False),
-    'run directory rolling archive length': vdr(
-        vtype='integer', default=2),
-    'task host select command timeout': vdr(
-        vtype='interval', default=DurationFloat(10)),
+    'process pool size': [VDR.V_INTEGER, 4],
+    'process pool timeout': [VDR.V_INTERVAL, DurationFloat(600)],
+    'temporary directory': [VDR.V_STRING],
+    'state dump rolling archive length': [VDR.V_INTEGER, 10],
+    'disable interactive command prompts': [VDR.V_BOOLEAN, True],
+    'enable run directory housekeeping': [VDR.V_BOOLEAN],
+    'run directory rolling archive length': [VDR.V_INTEGER, 2],
+    'task host select command timeout': [VDR.V_INTERVAL, DurationFloat(10)],
+    'xtrigger function timeout': [VDR.V_INTERVAL, DurationFloat(10)],
     'task messaging': {
-        'retry interval': vdr(
-            vtype='interval', default=DurationFloat(5)),
-        'maximum number of tries': vdr(vtype='integer', default=7),
-        'connection timeout': vdr(
-            vtype='interval', default=DurationFloat(30)),
+        'retry interval': [VDR.V_INTERVAL, DurationFloat(5)],
+        'maximum number of tries': [VDR.V_INTEGER, 7],
+        'connection timeout': [VDR.V_INTERVAL, DurationFloat(30)],
     },
 
     'cylc': {
-        'UTC mode': vdr(vtype='boolean', default=False),
-        'health check interval': vdr(
-            vtype='interval', default=DurationFloat(600)),
-        'task event mail interval': vdr(
-            vtype='interval', default=DurationFloat(300)),
+        'UTC mode': [VDR.V_BOOLEAN],
+        'health check interval': [VDR.V_INTERVAL, DurationFloat(600)],
+        'task event mail interval': [VDR.V_INTERVAL, DurationFloat(300)],
         'events': {
-            'handlers': vdr(vtype='string_list', default=[]),
-            'handler events': vdr(vtype='string_list', default=[]),
-            'mail events': vdr(vtype='string_list', default=[]),
-            'mail from': vdr(vtype='string'),
-            'mail smtp': vdr(vtype='string'),
-            'mail to': vdr(vtype='string'),
-            'mail footer': vdr(vtype='string'),
-            'startup handler': vdr(vtype='string_list', default=[]),
-            'timeout handler': vdr(vtype='string_list', default=[]),
-            'inactivity handler': vdr(vtype='string_list', default=[]),
-            'shutdown handler': vdr(vtype='string_list', default=[]),
-            'stalled handler': vdr(vtype='string_list', default=[]),
-            'timeout': vdr(vtype='interval'),
-            'inactivity': vdr(vtype='interval'),
-            'abort on timeout': vdr(vtype='boolean', default=False),
-            'abort on inactivity': vdr(vtype='boolean', default=False),
-            'abort on stalled': vdr(vtype='boolean', default=False),
+            'handlers': [VDR.V_STRING_LIST],
+            'handler events': [VDR.V_STRING_LIST],
+            'mail events': [VDR.V_STRING_LIST],
+            'mail from': [VDR.V_STRING],
+            'mail smtp': [VDR.V_STRING],
+            'mail to': [VDR.V_STRING],
+            'mail footer': [VDR.V_STRING],
+            'startup handler': [VDR.V_STRING_LIST],
+            'timeout handler': [VDR.V_STRING_LIST],
+            'inactivity handler': [VDR.V_STRING_LIST],
+            'shutdown handler': [VDR.V_STRING_LIST],
+            'stalled handler': [VDR.V_STRING_LIST],
+            'timeout': [VDR.V_INTERVAL],
+            'inactivity': [VDR.V_INTERVAL],
+            'abort on timeout': [VDR.V_BOOLEAN],
+            'abort on inactivity': [VDR.V_BOOLEAN],
+            'abort on stalled': [VDR.V_BOOLEAN],
         },
     },
 
     'suite logging': {
-        'roll over at start-up': vdr(vtype='boolean', default=True),
-        'rolling archive length': vdr(vtype='integer', default=5),
-        'maximum size in bytes': vdr(vtype='integer', default=1000000),
+        'rolling archive length': [VDR.V_INTEGER, 5],
+        'maximum size in bytes': [VDR.V_INTEGER, 1000000],
     },
 
     'documentation': {
         'files': {
-            'html index': vdr(
-                vtype='string', default="$CYLC_DIR/doc/install/index.html"),
-            'pdf user guide': vdr(
-                vtype='string',
-                default="$CYLC_DIR/doc/install/cylc-user-guide.pdf"),
-            'multi-page html user guide': vdr(
-                vtype='string',
-                default="$CYLC_DIR/doc/install/html/multi/cug-html.html"),
-            'single-page html user guide': vdr(
-                vtype='string',
-                default="$CYLC_DIR/doc/install/html/single/cug-html.html"),
+            'html index': [
+                VDR.V_STRING, '$CYLC_DIR/doc/install/index.html'],
+            'pdf user guide': [
+                VDR.V_STRING, '$CYLC_DIR/doc/install/cylc-user-guide.pdf'],
+            'multi-page html user guide': [
+                VDR.V_STRING,
+                '$CYLC_DIR/doc/install/html/multi/cug-html.html'],
+            'single-page html user guide': [
+                VDR.V_STRING,
+                '$CYLC_DIR/doc/install/html/single/cug-html.html'],
         },
         'urls': {
-            'internet homepage': vdr(
-                vtype='string', default="http://cylc.github.io/cylc/"),
-            'local index': vdr(vtype='string', default=None),
+            'internet homepage': [VDR.V_STRING, 'http://cylc.github.io/cylc/'],
+            'local index': [VDR.V_STRING],
         },
     },
 
     'document viewers': {
-        'pdf': vdr(vtype='string', default="evince"),
-        'html': vdr(vtype='string', default="firefox"),
+        'pdf': [VDR.V_STRING, 'evince'],
+        'html': [VDR.V_STRING, 'firefox'],
     },
     'editors': {
-        'terminal': vdr(vtype='string', default="vim"),
-        'gui': vdr(vtype='string', default="gvim -f"),
+        'terminal': [VDR.V_STRING, 'vim'],
+        'gui': [VDR.V_STRING, 'gvim -f'],
     },
 
     'communication': {
-        'method': vdr(vtype='string', default="https",
-                      options=["https", "http"]),
-        'base port': vdr(vtype='integer', default=43001),
-        'maximum number of ports': vdr(vtype='integer', default=100),
-        'proxies on': vdr(vtype='boolean', default=False),
-        'options': vdr(vtype='string_list', default=[]),
+        'method': [VDR.V_STRING, 'https', 'http'],
+        'base port': [VDR.V_INTEGER, 43001],
+        'maximum number of ports': [VDR.V_INTEGER, 100],
+        'proxies on': [VDR.V_BOOLEAN],
+        'options': [VDR.V_STRING_LIST],
     },
 
     'monitor': {
-        'sort order': vdr(vtype='string',
-                          options=["alphanumeric", "definition"],
-                          default="definition"),
+        'sort order': [VDR.V_STRING, 'definition', 'alphanumeric'],
     },
 
     'hosts': {
         'localhost': {
-            'run directory': vdr(vtype='string', default="$HOME/cylc-run"),
-            'work directory': vdr(vtype='string', default="$HOME/cylc-run"),
-            'task communication method': vdr(
-                vtype='string',
-                options=["default", "ssh", "poll"], default="default"),
-            'submission polling intervals': vdr(
-                vtype='interval_list', default=[]),
-            'execution polling intervals': vdr(
-                vtype='interval_list', default=[]),
-            'scp command': vdr(
-                vtype='string',
-                default='scp -oBatchMode=yes -oConnectTimeout=10'),
-            'ssh command': vdr(
-                vtype='string',
-                default='ssh -oBatchMode=yes -oConnectTimeout=10'),
-            'use login shell': vdr(vtype='boolean', default=True),
-            'cylc executable': vdr(vtype='string', default='cylc'),
-            'global init-script': vdr(vtype='string', default=''),
-            'copyable environment variables': vdr(
-                vtype='string_list', default=[]),
-            'retrieve job logs': vdr(vtype='boolean', default=False),
-            'retrieve job logs command': vdr(
-                vtype='string', default='rsync -a'),
-            'retrieve job logs max size': vdr(vtype='string'),
-            'retrieve job logs retry delays': vdr(
-                vtype='interval_list', default=[]),
-            'task event handler retry delays': vdr(
-                vtype='interval_list', default=[]),
-            'local tail command template': vdr(
-                vtype='string', default="tail -n +1 -F %(filename)s"),
-            'remote tail command template': vdr(
-                vtype='string',
-                default=(
-                    "tail --pid=`ps h -o ppid $$" +
-                    " | sed -e s/[[:space:]]//g` -n +1 -F %(filename)s")),
-            # Template for tail commands on remote files.  On signal to "ssh"
-            # client, a signal is sent to "sshd" on server.  However, "sshd"
-            # cannot send a signal to the "tail" command, because it is not a
-            # terminal. Apparently, we can use "ssh -t" or "ssh -tt", but that
-            # just causes the command to hang here for some reason. The easiest
-            # solution is to use the "--pid=PID" option of the "tail" command,
-            # so it dies as soon as PID dies. Note: if remote login shell is
-            # bash/ksh, we can use $PPID instead of `ps...` command, but we
-            # have to support login shell "tcsh" too.
+            'run directory': [VDR.V_STRING, '$HOME/cylc-run'],
+            'work directory': [VDR.V_STRING, '$HOME/cylc-run'],
+            'task communication method': [
+                VDR.V_STRING, 'default', 'ssh', 'poll'],
+            'submission polling intervals': [VDR.V_INTERVAL_LIST],
+            'execution polling intervals': [VDR.V_INTERVAL_LIST],
+            'scp command': [
+                VDR.V_STRING, 'scp -oBatchMode=yes -oConnectTimeout=10'],
+            'ssh command': [
+                VDR.V_STRING, 'ssh -oBatchMode=yes -oConnectTimeout=10'],
+            'use login shell': [VDR.V_BOOLEAN, True],
+            'cylc executable': [VDR.V_STRING, 'cylc'],
+            'global init-script': [VDR.V_STRING],
+            'copyable environment variables': [VDR.V_STRING_LIST],
+            'retrieve job logs': [VDR.V_BOOLEAN],
+            'retrieve job logs command': [VDR.V_STRING, 'rsync -a'],
+            'retrieve job logs max size': [VDR.V_STRING],
+            'retrieve job logs retry delays': [VDR.V_INTERVAL_LIST],
+            'task event handler retry delays': [VDR.V_INTERVAL_LIST],
+            'tail command template': [
+                VDR.V_STRING, 'tail -n +1 -F %(filename)s'],
             'batch systems': {
                 '__MANY__': {
-                    'err tailer': vdr(vtype='string'),
-                    'out tailer': vdr(vtype='string'),
-                    'err viewer': vdr(vtype='string'),
-                    'out viewer': vdr(vtype='string'),
-                    'job name length maximum': vdr(vtype='integer'),
-                    'execution time limit polling intervals': vdr(
-                        vtype='interval_list', default=[]),
+                    'err tailer': [VDR.V_STRING],
+                    'out tailer': [VDR.V_STRING],
+                    'err viewer': [VDR.V_STRING],
+                    'out viewer': [VDR.V_STRING],
+                    'job name length maximum': [VDR.V_INTEGER],
+                    'execution time limit polling intervals': [
+                        VDR.V_INTERVAL_LIST],
                 },
             },
         },
         '__MANY__': {
-            'run directory': vdr(vtype='string'),
-            'work directory': vdr(vtype='string'),
-            'task communication method': vdr(
-                vtype='string', options=["default", "ssh", "poll"]),
-            'submission polling intervals': vdr(
-                vtype='interval_list', default=[]),
-            'execution polling intervals': vdr(
-                vtype='interval_list', default=[]),
-            'scp command': vdr(vtype='string'),
-            'ssh command': vdr(vtype='string'),
-            'use login shell': vdr(vtype='boolean', default=None),
-            'cylc executable': vdr(vtype='string'),
-            'global init-script': vdr(vtype='string'),
-            'copyable environment variables': vdr(
-                vtype='string_list', default=[]),
-            'retrieve job logs': vdr(vtype='boolean', default=None),
-            'retrieve job logs command': vdr(vtype='string'),
-            'retrieve job logs max size': vdr(vtype='string'),
-            'retrieve job logs retry delays': vdr(
-                vtype='interval_list'),
-            'task event handler retry delays': vdr(
-                vtype='interval_list'),
-            'local tail command template': vdr(vtype='string'),
-            'remote tail command template': vdr(vtype='string'),
+            'run directory': [VDR.V_STRING],
+            'work directory': [VDR.V_STRING],
+            'task communication method': [
+                VDR.V_STRING, 'default', 'ssh', 'poll'],
+            'submission polling intervals': [VDR.V_INTERVAL_LIST],
+            'execution polling intervals': [VDR.V_INTERVAL_LIST],
+            'scp command': [VDR.V_STRING],
+            'ssh command': [VDR.V_STRING],
+            'use login shell': [VDR.V_BOOLEAN],
+            'cylc executable': [VDR.V_STRING],
+            'global init-script': [VDR.V_STRING],
+            'copyable environment variables': [VDR.V_STRING_LIST],
+            'retrieve job logs': [VDR.V_BOOLEAN],
+            'retrieve job logs command': [VDR.V_STRING],
+            'retrieve job logs max size': [VDR.V_STRING],
+            'retrieve job logs retry delays': [VDR.V_INTERVAL_LIST],
+            'task event handler retry delays': [VDR.V_INTERVAL_LIST],
+            'tail command template': [VDR.V_STRING],
             'batch systems': {
                 '__MANY__': {
-                    'err tailer': vdr(vtype='string'),
-                    'out tailer': vdr(vtype='string'),
-                    'out viewer': vdr(vtype='string'),
-                    'err viewer': vdr(vtype='string'),
-                    'job name length maximum': vdr(vtype='integer'),
-                    'execution time limit polling intervals': vdr(
-                        vtype='interval_list'),
+                    'err tailer': [VDR.V_STRING],
+                    'out tailer': [VDR.V_STRING],
+                    'out viewer': [VDR.V_STRING],
+                    'err viewer': [VDR.V_STRING],
+                    'job name length maximum': [VDR.V_INTEGER],
+                    'execution time limit polling intervals': [
+                        VDR.V_INTERVAL_LIST],
                 },
             },
         },
     },
 
     'task events': {
-        'execution timeout': vdr(vtype='interval'),
-        'handlers': vdr(vtype='string_list', default=[]),
-        'handler events': vdr(vtype='string_list', default=[]),
-        'handler retry delays': vdr(vtype='interval_list'),
-        'mail events': vdr(vtype='string_list', default=[]),
-        'mail from': vdr(vtype='string'),
-        'mail retry delays': vdr(vtype='interval_list', default=[]),
-        'mail smtp': vdr(vtype='string'),
-        'mail to': vdr(vtype='string'),
-        'reset timer': vdr(vtype='boolean', default=False),
-        'submission timeout': vdr(vtype='interval'),
+        'execution timeout': [VDR.V_INTERVAL],
+        'handlers': [VDR.V_STRING_LIST],
+        'handler events': [VDR.V_STRING_LIST],
+        'handler retry delays': [VDR.V_INTERVAL_LIST, None],
+        'mail events': [VDR.V_STRING_LIST],
+        'mail from': [VDR.V_STRING],
+        'mail retry delays': [VDR.V_INTERVAL_LIST],
+        'mail smtp': [VDR.V_STRING],
+        'mail to': [VDR.V_STRING],
+        'reset timer': [VDR.V_BOOLEAN],
+        'submission timeout': [VDR.V_INTERVAL],
     },
 
     'test battery': {
-        'remote host with shared fs': vdr(vtype='string'),
-        'remote host': vdr(vtype='string'),
+        'remote host with shared fs': [VDR.V_STRING],
+        'remote host': [VDR.V_STRING],
+        'remote owner': [VDR.V_STRING],
         'batch systems': {
             '__MANY__': {
-                'host': vdr(vtype='string'),
-                'out viewer': vdr(vtype='string'),
-                'err viewer': vdr(vtype='string'),
-                'directives': {'__MANY__': vdr(vtype='string')},
+                'host': [VDR.V_STRING],
+                'out viewer': [VDR.V_STRING],
+                'err viewer': [VDR.V_STRING],
+                'directives': {
+                    '__MANY__': [VDR.V_STRING],
+                },
             },
         },
     },
 
     'suite host self-identification': {
-        'method': vdr(
-            vtype='string',
-            options=["name", "address", "hardwired"],
-            default="name"),
-        'target': vdr(vtype='string', default="google.com"),
-        'host': vdr(vtype='string'),
-    },
-
-    'suite host scanning': {
-        'hosts': vdr(vtype='string_list', default=["localhost"])
+        'method': [VDR.V_STRING, 'name', 'address', 'hardwired'],
+        'target': [VDR.V_STRING, 'google.com'],
+        'host': [VDR.V_STRING],
     },
 
     'authentication': {
         # Allow owners to grant public shutdown rights at the most, not full
         # control.
-        'public': vdr(
-            vtype='string',
-            options=(
-                PRIVILEGE_LEVELS[:PRIVILEGE_LEVELS.index(PRIV_SHUTDOWN) + 1]),
-            default=PRIV_STATE_TOTALS),
+        'public': (
+            [VDR.V_STRING, PRIV_STATE_TOTALS] +
+            PRIVILEGE_LEVELS[:PRIVILEGE_LEVELS.index(PRIV_SHUTDOWN) + 1]),
+    },
+
+    'suite servers': {
+        'run hosts': [VDR.V_SPACELESS_STRING_LIST],
+        'run ports': [VDR.V_INTEGER_LIST, range(43001, 43101)],
+        'scan hosts': [VDR.V_SPACELESS_STRING_LIST],
+        'scan ports': [VDR.V_INTEGER_LIST, range(43001, 43101)],
+        'condemned hosts': [VDR.V_SPACELESS_STRING_LIST],
+        'auto restart delay': [VDR.V_INTERVAL],
+        'run host select': {
+            'rank': [VDR.V_STRING, 'random', 'load:1', 'load:5', 'load:15',
+                     'memory', 'disk-space'],
+            'thresholds': [VDR.V_STRING],
+        },
     },
 }
 
@@ -289,10 +259,20 @@ def upg(cfg, descr):
     """Upgrader."""
     add_bin_dir = converter(lambda x: x + '/bin', "Added + '/bin' to path")
     use_ssh = converter(lambda x: "ssh", "set to 'ssh'")
+
     u = upgrader(cfg, descr)
-    u.deprecate('5.1.1', ['editors', 'in-terminal'], ['editors', 'terminal'])
-    u.deprecate('5.1.1', ['task hosts'], ['hosts'])
-    u.deprecate('5.1.1', ['hosts', 'local'], ['hosts', 'localhost'])
+    u.deprecate(
+        '5.1.1',
+        ['editors', 'in-terminal'],
+        ['editors', 'terminal'])
+    u.deprecate(
+        '5.1.1',
+        ['task hosts'],
+        ['hosts'])
+    u.deprecate(
+        '5.1.1',
+        ['hosts', 'local'],
+        ['hosts', 'localhost'])
     u.deprecate(
         '5.1.1',
         ['hosts', '__MANY__', 'workspace directory'],
@@ -332,37 +312,40 @@ def upg(cfg, descr):
             '6.4.1',
             ['test battery', 'directives', batch_sys_name + ' directives'],
             ['test battery', 'batch systems', batch_sys_name, 'directives'])
-    u.obsolete('6.4.1', ['test battery', 'directives'])
-    u.obsolete('6.11.0', ['state dump rolling archive length'])
-    u.deprecate('6.11.0', ['cylc', 'event hooks'], ['cylc', 'events'])
+    u.obsolete(
+        '6.4.1',
+        ['test battery', 'directives'])
+    u.obsolete(
+        '6.11.0',
+        ['state dump rolling archive length'])
+    u.deprecate(
+        '6.11.0',
+        ['cylc', 'event hooks'],
+        ['cylc', 'events'])
     for key in SPEC['cylc']['events']:
         u.deprecate(
-            '6.11.0', ['cylc', 'event hooks', key], ['cylc', 'events', key])
+            '6.11.0',
+            ['cylc', 'event hooks', key],
+            ['cylc', 'events', key])
     u.obsolete(
         '7.0.0',
-        ['pyro', 'base port']
-    )
+        ['pyro', 'base port'])
     u.obsolete(
         '7.0.0',
         ['pyro', 'maximum number of ports'],
-        ['communication', 'maximum number of ports']
-    )
+        ['communication', 'maximum number of ports'])
     u.obsolete(
         '7.0.0',
-        ['pyro', 'ports directory'],
-    )
+        ['pyro', 'ports directory'])
     u.obsolete(
         '7.0.0',
-        ['pyro']
-    )
+        ['pyro'])
     u.obsolete(
         '7.0.0',
-        ['authentication', 'hashes']
-    )
+        ['authentication', 'hashes'])
     u.obsolete(
         '7.0.0',
-        ['authentication', 'scan hash']
-    )
+        ['authentication', 'scan hash'])
     u.deprecate(
         '7.0.0',
         ['execution polling intervals'],
@@ -379,6 +362,38 @@ def upg(cfg, descr):
         '7.3.1',
         ['hosts', '__MANY__', 'remote copy template'],
         ['hosts', '__MANY__', 'scp command'])
+    # A special remote tail command template is no longer needed. It used to
+    # use 'tail -pid' to kill 'tail' on ssh exit, but we do this in cylc now.
+    u.obsolete(
+        '7.6.0',
+        ['hosts', '__MANY__', 'remote tail command template'])
+    u.deprecate(
+        '7.6.0',
+        ['hosts', '__MANY__', 'local tail command template'],
+        ['hosts', '__MANY__', 'tail command template'])
+    u.deprecate(
+        '7.8.0',
+        ['communication', 'base port'],
+        ['suite servers', 'run ports'],
+        converter(lambda x: '%s .. %s' % (
+            int(x),
+            int(x) + int(cfg['communication']['maximum number of ports'])),
+            "Format as range list"))
+    u.obsolete(
+        '7.8.0',
+        ['communication', 'maximum number of ports'])
+    u.deprecate(
+        '7.8.0',
+        ['suite host scanning'],
+        ['suite servers'])
+    u.deprecate(
+        '7.8.0',
+        ['suite servers', 'hosts'],
+        ['suite servers', 'scan hosts'])
+    # Roll over is always done.
+    u.obsolete(
+        '7.8.0',
+        ['suite logging', 'roll over at start-up'])
     u.upgrade()
 
 
@@ -389,7 +404,7 @@ class GlobalConfigError(Exception):
         return repr(self.args[0])
 
 
-class GlobalConfig(config):
+class GlobalConfig(ParsecConfig):
     """
     Handle global (all suites) site and user configuration for cylc.
     User file values override site file values.
@@ -399,52 +414,77 @@ class GlobalConfig(config):
     """
 
     _DEFAULT = None
+    # For working with git clones, just go to minor version number.
+    cylc_version = re.sub('-.*', '', CYLC_VERSION)
     CONF_BASE = "global.rc"
-    SITE_CONF_DIR = os.path.join(os.environ["CYLC_DIR"], "conf")
-    USER_CONF_DIR = os.path.join(os.environ['HOME'], '.cylc')
-    OLD_SITE_CONF_BASE = os.path.join("siterc", "site.rc")
-    OLD_USER_CONF_BASE = os.path.join("user.rc")
+    # Site global.rc loc preference: if not in etc/ look in old conf/.
+    SITE_CONF_DIR = os.path.join(os.environ["CYLC_DIR"], "etc")
+    SITE_CONF_DIR_OLD = os.path.join(os.environ["CYLC_DIR"], "conf")
+    # User global.rc loc preference: if not in .cylc/x.y.z/ look in .cylc/.
+    USER_CONF_DIR_1 = os.path.join(os.environ['HOME'], '.cylc', cylc_version)
+    USER_CONF_DIR_2 = os.path.join(os.environ['HOME'], '.cylc')
 
     @classmethod
-    def get_inst(cls):
-        """Return the singleton instance."""
-        if not cls._DEFAULT:
-            if cylc.flags.verbose:
-                print "Loading site/user config files"
-            cls._DEFAULT = cls(SPEC, upg)
-            conf_path_str = os.getenv("CYLC_CONF_PATH")
-            count = 0
-            if conf_path_str is None:
-                # CYLC_CONF_PATH not defined, use default locations
-                for old_base, conf_dir in [
-                        [cls.OLD_SITE_CONF_BASE, cls.SITE_CONF_DIR],
-                        [cls.OLD_USER_CONF_BASE, cls.USER_CONF_DIR]]:
-                    for base in [cls.CONF_BASE, old_base]:
-                        file_name = os.path.join(conf_dir, base)
-                        if os.access(file_name, os.F_OK | os.R_OK):
-                            try:
-                                cls._DEFAULT.loadcfg(
-                                    file_name, "global config")
-                            except ParsecError as exc:
-                                if count == 0:
-                                    sys.stderr.write(
-                                        "WARNING: ignoring bad site config %s:"
-                                        "\n%s\n" % (file_name, str(exc)))
-                                else:
-                                    sys.stderr.write(
-                                        "ERROR: bad user config %s:\n" % (
-                                            file_name))
-                                    raise
-                            count += 1
-                            break
-            elif conf_path_str:
-                # CYLC_CONF_PATH defined with a value
-                for path in conf_path_str.split(os.pathsep):
-                    file_name = os.path.join(path, cls.CONF_BASE)
-                    if os.access(file_name, os.F_OK | os.R_OK):
-                        cls._DEFAULT.loadcfg(file_name, "global config")
-            cls._DEFAULT.transform()
+    def get_inst(cls, cached=True):
+        """Return a GlobalConfig instance.
+
+        Args:
+            cached (bool):
+                If cached create if necessary and return the singleton
+                instance, else return a new instance.
+        """
+        if not cached:
+            # Return an up-to-date global config without affecting the
+            # singleton.
+            new_instance = cls(SPEC, upg, validator=cylc_config_validate)
+            new_instance.load()
+            return new_instance
+        elif not cls._DEFAULT:
+            cls._DEFAULT = cls(SPEC, upg, validator=cylc_config_validate)
+            cls._DEFAULT.load()
         return cls._DEFAULT
+
+    def load(self):
+        """Load or reload configuration from files."""
+        self.sparse.clear()
+        self.dense.clear()
+        LOG.debug("Loading site/user global config files")
+        conf_path_str = os.getenv("CYLC_CONF_PATH")
+        if conf_path_str is None:
+            # CYLC_CONF_PATH not defined, use default locations.
+            for conf_dir_1, conf_dir_2, conf_type in [
+                    (self.SITE_CONF_DIR, self.SITE_CONF_DIR_OLD,
+                     upgrader.SITE_CONFIG),
+                    (self.USER_CONF_DIR_1, self.USER_CONF_DIR_2,
+                     upgrader.USER_CONFIG)]:
+                fname1 = os.path.join(conf_dir_1, self.CONF_BASE)
+                fname2 = os.path.join(conf_dir_2, self.CONF_BASE)
+                if os.access(fname1, os.F_OK | os.R_OK):
+                    fname = fname1
+                elif os.access(fname2, os.F_OK | os.R_OK):
+                    fname = fname2
+                else:
+                    continue
+                try:
+                    self.loadcfg(fname, conf_type)
+                except ParsecError as exc:
+                    if conf_type == upgrader.SITE_CONFIG:
+                        # Warn on bad site file (users can't fix it).
+                        LOG.warning(
+                            'ignoring bad %s %s:\n%s', conf_type, fname, exc)
+                    else:
+                        # Abort on bad user file (users can fix it).
+                        LOG.error('bad %s %s', conf_type, fname)
+                        raise
+                    break
+        elif conf_path_str:
+            # CYLC_CONF_PATH defined with a value
+            for path in conf_path_str.split(os.pathsep):
+                fname = os.path.join(path, self.CONF_BASE)
+                if os.access(fname, os.F_OK | os.R_OK):
+                    self.loadcfg(fname, upgrader.USER_CONFIG)
+        # (OK if no global.rc is found, just use system defaults).
+        self.transform()
 
     def get_derived_host_item(
             self, suite, item, host=None, owner=None, replace_home=False):
@@ -464,6 +504,9 @@ class GlobalConfig(config):
 
         elif item == 'suite log directory':
             value = os.path.join(srdir, 'log', 'suite')
+
+        elif item == 'suite log':
+            value = os.path.join(srdir, 'log', 'suite', 'log')
 
         elif item == 'suite job log directory':
             value = os.path.join(srdir, 'log', 'job')
@@ -500,16 +543,15 @@ class GlobalConfig(config):
 
         # is there a matching host section?
         host_key = None
-        if host:
-            if host in cfg['hosts']:
-                # there's an entry for this host
-                host_key = host
-            else:
-                # try for a pattern match
-                for cfg_host in cfg['hosts']:
-                    if re.match(cfg_host, host):
-                        host_key = cfg_host
-                        break
+        if host in cfg['hosts']:
+            # there's an entry for this host
+            host_key = host
+        else:
+            # try for a pattern match
+            for cfg_host in cfg['hosts']:
+                if re.match(cfg_host, host):
+                    host_key = cfg_host
+                    break
         modify_dirs = False
         if host_key is not None:
             # entry exists, any unset items under it have already
@@ -540,18 +582,18 @@ class GlobalConfig(config):
         E.g. if archlen = 2 we keep:
             dir_, dir_.1, dir_.2. If 0 keep no old ones.
         """
-        for n in range(archlen, -1, -1):  # archlen...0
-            if n > 0:
-                dpath = dir_ + '.' + str(n)
+        for i in range(archlen, -1, -1):  # archlen...0
+            if i > 0:
+                dpath = dir_ + '.' + str(i)
             else:
                 dpath = dir_
             if os.path.exists(dpath):
-                if n >= archlen:
+                if i >= archlen:
                     # remove oldest backup
                     shutil.rmtree(dpath)
                 else:
                     # roll others over
-                    os.rename(dpath, dir_ + '.' + str(n + 1))
+                    os.rename(dpath, dir_ + '.' + str(i + 1))
         self.create_directory(dir_, name)
 
     @staticmethod
@@ -560,22 +602,16 @@ class GlobalConfig(config):
         try:
             mkdir_p(dir_)
         except OSError as exc:
-            print >> sys.stderr, str(exc)
+            LOG.exception(exc)
             raise GlobalConfigError(
                 'Failed to create directory "' + name + '"')
 
     def create_cylc_run_tree(self, suite):
         """Create all top-level cylc-run output dirs on the suite host."""
-
-        if cylc.flags.verbose:
-            print 'Creating the suite output tree:'
-
         cfg = self.get()
-
         item = 'suite run directory'
-        if cylc.flags.verbose:
-            print ' +', item
         idir = self.get_derived_host_item(suite, item)
+        LOG.debug('creating %s: %s', item, idir)
         if cfg['enable run directory housekeeping']:
             self.roll_directory(
                 idir, item, cfg['run directory rolling archive length'])
@@ -586,9 +622,8 @@ class GlobalConfig(config):
                 'suite config log directory',
                 'suite work directory',
                 'suite share directory']:
-            if cylc.flags.verbose:
-                print ' +', item
             idir = self.get_derived_host_item(suite, item)
+            LOG.debug('creating %s: %s', item, idir)
             self.create_directory(idir, item)
 
         item = 'temporary directory'
@@ -609,8 +644,8 @@ class GlobalConfig(config):
         cfg = self.get()
         tdir = cfg['temporary directory']
         if tdir:
-            tdir = expandvars(tdir)
-            tmpdir = mkdtemp(prefix="cylc-", dir=expandvars(tdir))
+            tdir = os.path.expandvars(tdir)
+            tmpdir = mkdtemp(prefix="cylc-", dir=os.path.expandvars(tdir))
         else:
             tmpdir = mkdtemp(prefix="cylc-")
         # self-cleanup
@@ -643,11 +678,8 @@ class GlobalConfig(config):
 
         # Expand environment variables and ~user in LOCAL file paths.
         for key, val in cfg['documentation']['files'].items():
-            cfg['documentation']['files'][key] = expandvars(val)
+            cfg['documentation']['files'][key] = os.path.expandvars(val)
 
         for key, val in cfg['hosts']['localhost'].items():
             if val and 'directory' in key:
-                cfg['hosts']['localhost'][key] = expandvars(val)
-
-
-GLOBAL_CFG = GlobalConfig.get_inst()
+                cfg['hosts']['localhost'][key] = os.path.expandvars(val)

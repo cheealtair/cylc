@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 # 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -29,13 +29,13 @@ cp -r *.tex cug-html.cfg cylc-version.txt titlepic.sty $DEST
 
 cd $DEST
 ls *.tex | xargs -n 1 perl -pi -e 's@graphics/png/orig@../../graphics/png/scaled@g'
-ls *.tex | xargs -n 1 perl -pi -e 's@\.\./examples/@../../../examples/@g'
-ls *.tex | xargs -n 1 perl -pi -e 's@\.\./conf/@../../../conf/@g'
+ls *.tex | xargs -n 1 perl -pi -e 's@\.\./etc/@../../../etc/@g'
 perl -pi -e 's@categories/@../../categories/@g' commands.tex
 perl -pi -e 's@commands/@../../commands/@g' commands.tex
 perl -pi -e 's@cylc.txt@../../cylc.txt@g' commands.tex
 perl -pi -e 's@\.\./README@../../../README@g' cug.tex
 perl -pi -e 's@\.\./INSTALL@../../../INSTALL@g' cug.tex
+perl -pi -e 's@job-host-2.tex@job-host-2-html.tex@g' cug.tex
 
 # NOTE the 5th argument '-halt-on-error' is passed to the latex
 # compiler, but htlatex does not return error status if latex aborts.

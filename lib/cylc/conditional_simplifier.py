@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -43,7 +43,7 @@ class ConditionalSimplifier(object):
 
         Examples:
             >>> ConditionalSimplifier.listify('(foo)')
-            [['foo']]
+            ['foo']
 
             >>> ConditionalSimplifier.listify('foo & (bar | baz)')
             ['foo', '&', ['bar', '|', 'baz']]
@@ -51,8 +51,14 @@ class ConditionalSimplifier(object):
             >>> ConditionalSimplifier.listify('(a&b)|(c|d)&(e|f)')
             [['a', '&', 'b'], '|', ['c', '|', 'd'], '&', ['e', '|', 'f']]
 
-            >>> ConditionalSimplifier.listify('a & (b, c,)')
-            ['a', '&', ['b, c,']]
+            >>> ConditionalSimplifier.listify('a & (b & c)')
+            ['a', '&', ['b', '&', 'c']]
+
+            >>> ConditionalSimplifier.listify('a & b')
+            ['a', '&', 'b']
+
+            >>> ConditionalSimplifier.listify('a & (b)')
+            ['a', '&', 'b']
 
             >>> ConditionalSimplifier.listify('((foo)')
             Traceback (most recent call last):
@@ -78,6 +84,8 @@ class ConditionalSimplifier(object):
                 stack.pop()
                 if not stack:
                     raise ValueError(message)
+                if isinstance(stack[-1][-1], list) and len(stack[-1][-1]) == 1:
+                    stack[-1][-1] = stack[-1][-1][0]
         if len(stack) > 1:
             raise ValueError(message)
         return ret_list
@@ -108,7 +116,7 @@ class ConditionalSimplifier(object):
     def nest_by_oper(cls, nest_me, oper):
         """Nest a list based on a specified logical operation"""
         found = False
-        for i in range(len(nest_me)):
+        for i, _ in enumerate(nest_me):
             if isinstance(nest_me[i], list):
                 nest_me[i] = cls.nest_by_oper(nest_me[i], oper)
             if nest_me[i] == oper:
@@ -146,7 +154,7 @@ class ConditionalSimplifier(object):
 
         # Recurse through the nested list and remove criterion.
         found = None
-        for i in range(0, len(cleaned)):
+        for i, _ in enumerate(cleaned):
             if isinstance(cleaned[i], list):
                 cleaned[i] = cls.clean_expr(cleaned[i], criterion)
             if cleaned[i] in [criterion, '']:
@@ -175,11 +183,9 @@ class ConditionalSimplifier(object):
     def flatten_nested_expr(cls, expr):
         """Convert a logical expression in a nested list back to a string"""
         flattened = copy.deepcopy(expr)
-        for i in range(len(flattened)):
+        for i, _ in enumerate(flattened):
             if isinstance(flattened[i], list):
                 flattened[i] = cls.flatten_nested_expr(flattened[i])
         if isinstance(flattened, list):
-            flattened = (" ").join(flattened)
-        flattened = "(" + flattened
-        flattened += ")"
-        return flattened
+            flattened = " ".join(flattened)
+        return "({0})".format(flattened)

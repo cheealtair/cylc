@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -75,7 +75,7 @@ class AtCommandHandler(object):
     def filter_submit_output(self, out, err):
         """Suppress at's routine output to stderr.
 
-        Otherwises we get warning messages that suggest something is wrong.
+        Otherwise we get warning messages that suggest something is wrong.
         1) move the standard job ID message from stderr to stdout
         2) suppress the message warning that commands will be executed with
         /bin/sh (this refers to the command line that runs the job script).

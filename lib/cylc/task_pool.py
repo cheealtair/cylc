@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -32,16 +32,20 @@ tasks against the new stop cycle.
 """
 
 from fnmatch import fnmatchcase
-import pickle
+import json
 from time import time
-import traceback
 
+from parsec.OrderedDict import OrderedDict
+
+from cylc import LOG
 from cylc.config import SuiteConfigError
 from cylc.cycling.loader import get_point, standardise_point_string
-import cylc.flags
-from cylc.suite_logging import ERR, LOG
 from cylc.task_action_timer import TaskActionTimer
+from cylc.task_events_mgr import (
+    CustomTaskEventHandlerContext, TaskEventMailContext,
+    TaskJobLogsRetrieveContext)
 from cylc.task_id import TaskID
+from cylc.task_job_logs import get_task_job_id
 from cylc.task_proxy import TaskProxy
 from cylc.task_state import (
     TASK_STATUSES_ACTIVE, TASK_STATUSES_NOT_STALLED,
@@ -66,11 +70,14 @@ class TaskPool(object):
     STOP_REQUEST_NOW = 'REQUEST(NOW)'
     STOP_REQUEST_NOW_NOW = 'REQUEST(NOW-NOW)'
 
-    def __init__(self, config, stop_point, suite_db_mgr, task_events_mgr):
+    def __init__(self, config, stop_point, suite_db_mgr, task_events_mgr,
+                 proc_pool, xtrigger_mgr):
         self.config = config
         self.stop_point = stop_point
         self.suite_db_mgr = suite_db_mgr
         self.task_events_mgr = task_events_mgr
+        self.proc_pool = proc_pool
+        self.xtrigger_mgr = xtrigger_mgr
 
         self.do_reload = False
         self.custom_runahead_limit = self.config.get_custom_runahead_limit()
@@ -163,10 +170,10 @@ class TaskPool(object):
             itask = self.add_to_runahead_pool(TaskProxy(
                 taskdef, point, stop_point=stop_point, submit_num=submit_num))
             if itask:
-                LOG.info("inserted", itask=itask)
+                LOG.info("[%s] -inserted", itask)
         return n_warnings
 
-    def add_to_runahead_pool(self, itask, is_restart=False):
+    def add_to_runahead_pool(self, itask, is_new=True):
         """Add a new task to the runahead pool if possible.
 
         Tasks whose recurrences allow them to spawn beyond the suite
@@ -194,12 +201,12 @@ class TaskPool(object):
         # add in held state if beyond the suite hold point
         if self.hold_point and itask.point > self.hold_point:
             LOG.info(
-                "holding (beyond suite hold point) %s" % self.hold_point,
-                itask=itask)
+                "[%s] -holding (beyond suite hold point) %s",
+                itask, self.hold_point)
             itask.state.set_held()
-        elif (itask.point <= self.stop_point and
+        elif (self.stop_point and itask.point <= self.stop_point and
                 self.task_has_future_trigger_overrun(itask)):
-            LOG.info("holding (future trigger beyond stop point)", itask=itask)
+            LOG.info("[%s] -holding (future trigger beyond stop point)", itask)
             self.held_future_tasks.append(itask.identity)
             itask.state.set_held()
         elif self.is_held and itask.state.status == TASK_STATUS_WAITING:
@@ -208,19 +215,12 @@ class TaskPool(object):
             itask.state.set_held()
 
         # add to the runahead pool
-        self.runahead_pool.setdefault(itask.point, {})
+        self.runahead_pool.setdefault(itask.point, OrderedDict())
         self.runahead_pool[itask.point][itask.identity] = itask
         self.rhpool_changed = True
 
-        if is_restart:
-            return itask
-
-        # store in persistent
-        if itask.submit_num > 0:
-            self.suite_db_mgr.put_update_task_states(itask, {
-                "time_updated": get_current_time_string(),
-                "status": itask.state.status})
-        else:
+        # add row to "task_states" table
+        if is_new and itask.submit_num == 0:
             self.suite_db_mgr.put_insert_task_states(itask, {
                 "time_created": get_current_time_string(),
                 "time_updated": get_current_time_string(),
@@ -315,7 +315,7 @@ class TaskPool(object):
                         )
                     )
             self._prev_runahead_base_point = runahead_base_point
-        if latest_allowed_point > self.stop_point:
+        if self.stop_point and latest_allowed_point > self.stop_point:
             latest_allowed_point = self.stop_point
 
         for point, itask_id_map in self.runahead_pool.copy().items():
@@ -328,27 +328,21 @@ class TaskPool(object):
     def load_db_task_pool_for_restart(self, row_idx, row):
         """Load a task from previous task pool.
 
-        The state of task prerequisites (satisfied or not) and outputs
-        (completed or not) is determined by the recorded TASK_STATUS:
+        Output completion status is loaded from the DB, and tasks recorded
+        as submitted or running are polled to confirm their true status.
 
-        TASK_STATUS_WAITING    - prerequisites and outputs unsatisified
-        TASK_STATUS_HELD       - ditto (only waiting tasks can be held)
-        TASK_STATUS_QUEUED     - prereqs satisfied, outputs not completed
-                                 (only tasks ready to run can get queued)
-        TASK_STATUS_READY      - ditto
-        TASK_STATUS_SUBMITTED  - ditto (but see *)
-        TASK_STATUS_SUBMIT_RETRYING - ditto
-        TASK_STATUS_RUNNING    - ditto (but see *)
-        TASK_STATUS_FAILED     - ditto (tasks must run in order to fail)
-        TASK_STATUS_RETRYING   - ditto (tasks must fail in order to retry)
-        TASK_STATUS_SUCCEEDED  - prerequisites satisfied, outputs completed
+        Prerequisite status (satisfied or not) is inferred from task status:
+           WAITING or HELD  - all prerequisites unsatisfied
+           status > QUEUED - all prerequisites satisfied.
+        TODO - this is not correct, e.g. a held task may have some (but not
+        all) satisfied prerequisites; and a running task (etc.) could have
+        been manually triggered with unsatisfied prerequisites. See comments
+        in GitHub #2329 on how to fix this in the future.
 
-        (*) tasks reloaded with TASK_STATUS_SUBMITTED or TASK_STATUS_RUNNING
-        are polled to determine what their true status is.
         """
         if row_idx == 0:
             LOG.info("LOADING task proxies")
-        (cycle, name, spawned, status, hold_swap, submit_num, _,
+        (cycle, name, spawned, is_late, status, hold_swap, submit_num, _,
          user_at_host, time_submit, time_run, timeout,
          outputs_str) = row
         try:
@@ -357,18 +351,15 @@ class TaskPool(object):
                 get_point(cycle),
                 hold_swap=hold_swap,
                 has_spawned=bool(spawned),
-                submit_num=submit_num)
-        except SuiteConfigError as exc:
-            if cylc.flags.debug:
-                ERR.error(traceback.format_exc())
-            else:
-                ERR.error(str(exc))
-            ERR.warning((
-                "ignoring task %s from the suite run database\n"
-                "(its task definition has probably been deleted).") % name)
+                submit_num=submit_num,
+                is_late=bool(is_late))
+        except SuiteConfigError:
+            LOG.exception((
+                'ignoring task %s from the suite run database\n'
+                '(its task definition has probably been deleted).'
+            ) % name)
         except Exception:
-            ERR.error(traceback.format_exc())
-            ERR.error("could not load task %s" % name)
+            LOG.exception('could not load task %s' % name)
         else:
             if status in (TASK_STATUS_SUBMITTED, TASK_STATUS_RUNNING):
                 itask.state.set_prerequisites_all_satisfied()
@@ -376,15 +367,15 @@ class TaskPool(object):
                 try:
                     itask.task_owner, itask.task_host = user_at_host.split(
                         "@", 1)
-                except ValueError:
+                except (AttributeError, ValueError):
                     itask.task_owner = None
                     itask.task_host = user_at_host
                 if time_submit:
-                    itask.set_event_time('submitted', time_submit)
+                    itask.set_summary_time('submitted', time_submit)
                 if time_run:
-                    itask.set_event_time('started', time_run)
+                    itask.set_summary_time('started', time_run)
                 if timeout is not None:
-                    itask.timeout_timers[status] = timeout
+                    itask.timeout = timeout
 
             elif status in (TASK_STATUS_SUBMIT_FAILED, TASK_STATUS_FAILED):
                 itask.state.set_prerequisites_all_satisfied()
@@ -402,17 +393,22 @@ class TaskPool(object):
 
             itask.state.reset_state(status)
 
-            # Tasks that are running or finished can have completed custom
-            # outputs
+            # Running or finished task can have completed custom outputs.
             if status in [
                     TASK_STATUS_RUNNING, TASK_STATUS_FAILED,
                     TASK_STATUS_SUCCEEDED]:
                 try:
-                    for output in outputs_str.splitlines():
-                        itask.state.outputs.set_completion(
-                            output.split("=", 1)[1], True)
-                except AttributeError:
-                    pass
+                    for message in json.loads(outputs_str).values():
+                        itask.state.outputs.set_completion(message, True)
+                except (AttributeError, TypeError, ValueError):
+                    # Back compat for <=7.6.X
+                    # Each output in separate line as "trigger=message"
+                    try:
+                        for output in outputs_str.splitlines():
+                            itask.state.outputs.set_completion(
+                                output.split("=", 1)[1], True)
+                    except AttributeError:
+                        pass
 
             if user_at_host:
                 itask.summary['job_hosts'][int(submit_num)] = user_at_host
@@ -420,37 +416,64 @@ class TaskPool(object):
                 LOG.info("+ %s.%s %s (%s)" % (name, cycle, status, hold_swap))
             else:
                 LOG.info("+ %s.%s %s" % (name, cycle, status))
-            self.add_to_runahead_pool(itask, is_restart=True)
+            self.add_to_runahead_pool(itask, is_new=False)
 
     def load_db_task_action_timers(self, row_idx, row):
         """Load a task action timer, e.g. event handlers, retry states."""
         if row_idx == 0:
             LOG.info("LOADING task action timers")
-        (cycle, name, ctx_key_pickle, ctx_pickle, delays_pickle, num, delay,
+        (cycle, name, ctx_key_raw, ctx_raw, delays_raw, num, delay,
          timeout) = row
         id_ = TaskID.get(name, cycle)
-        ctx_key = "?"
         try:
-            ctx_key = pickle.loads(str(ctx_key_pickle))
-            ctx = pickle.loads(str(ctx_pickle))
-            delays = pickle.loads(str(delays_pickle))
-            if ctx_key and ctx_key[0] in ["poll_timers", "try_timers"]:
-                itask = self.get_task_by_id(id_)
-                if itask is None:
-                    ERR.warning("%(id)s: task not found, skip" % {"id": id_})
-                    return
-                getattr(itask, ctx_key[0])[ctx_key[1]] = TaskActionTimer(
-                    ctx, delays, num, delay, timeout)
+            # Extract type namedtuple variables from JSON strings
+            ctx_key = json.loads(str(ctx_key_raw))
+            ctx_data = json.loads(str(ctx_raw))
+            for known_cls in [
+                    CustomTaskEventHandlerContext,
+                    TaskEventMailContext,
+                    TaskJobLogsRetrieveContext]:
+                if ctx_data and ctx_data[0] == known_cls.__name__:
+                    ctx = known_cls(*ctx_data[1])
+                    break
             else:
-                key1, submit_num = ctx_key
-                key = (key1, cycle, name, submit_num)
-                self.task_events_mgr.event_timers[key] = TaskActionTimer(
-                    ctx, delays, num, delay, timeout)
-        except (EOFError, TypeError, LookupError, ValueError):
-            ERR.warning(
+                ctx = ctx_data
+                if ctx is not None:
+                    ctx = tuple(ctx)
+            delays = json.loads(str(delays_raw))
+        except ValueError:
+            LOG.exception(
                 "%(id)s: skip action timer %(ctx_key)s" %
-                {"id": id_, "ctx_key": ctx_key})
-            ERR.warning(traceback.format_exc())
+                {"id": id_, "ctx_key": ctx_key_raw})
+            return
+        if ctx_key == "poll_timer" or ctx_key[0] == "poll_timers":
+            # "poll_timers" for back compat with <=7.6.X
+            itask = self.get_task_by_id(id_)
+            if itask is None:
+                LOG.warning("%(id)s: task not found, skip" % {"id": id_})
+                return
+            itask.poll_timer = TaskActionTimer(
+                ctx, delays, num, delay, timeout)
+        elif ctx_key[0] == "try_timers":
+            itask = self.get_task_by_id(id_)
+            if itask is None:
+                LOG.warning("%(id)s: task not found, skip" % {"id": id_})
+                return
+            itask.try_timers[ctx_key[1]] = TaskActionTimer(
+                ctx, delays, num, delay, timeout)
+        elif ctx:
+            key1, submit_num = ctx_key
+            # Convert key1 to type tuple - JSON restores as type list
+            # and this will not previously have been converted back
+            if isinstance(key1, list):
+                key1 = tuple(key1)
+            key = (key1, cycle, name, submit_num)
+            self.task_events_mgr.event_timers[key] = TaskActionTimer(
+                ctx, delays, num, delay, timeout)
+        else:
+            LOG.exception(
+                "%(id)s: skip action timer %(ctx_key)s" %
+                {"id": id_, "ctx_key": ctx_key_raw})
             return
         LOG.info("+ %s.%s %s" % (name, cycle, ctx_key))
 
@@ -460,12 +483,12 @@ class TaskPool(object):
             queue = self.myq[itask.tdef.name]
         except KeyError:
             queue = self.config.Q_DEFAULT
-        self.queues.setdefault(queue, {})
+        self.queues.setdefault(queue, OrderedDict())
         self.queues[queue][itask.identity] = itask
         self.pool.setdefault(itask.point, {})
         self.pool[itask.point][itask.identity] = itask
         self.pool_changed = True
-        LOG.debug("released to the task pool", itask=itask)
+        LOG.debug("[%s] -released to the task pool", itask)
         del self.runahead_pool[itask.point][itask.identity]
         if not self.runahead_pool[itask.point]:
             del self.runahead_pool[itask.point]
@@ -495,7 +518,7 @@ class TaskPool(object):
         msg = "task proxy removed"
         if reason:
             msg += " (%s)" % reason
-        LOG.debug(msg, itask=itask)
+        LOG.debug("[%s] -%s", itask, msg)
         if itask.tdef.max_future_prereq_offset is not None:
             self.set_max_future_offset()
         del itask
@@ -568,25 +591,32 @@ class TaskPool(object):
         Return the tasks that are dequeued.
         """
 
-        # 1) queue unqueued tasks that are ready to run or manually forced
         now = time()
-        for itask in self.get_tasks():
-            if itask.state.status != TASK_STATUS_QUEUED:
-                # only need to check that unqueued tasks are ready
-                if itask.manual_trigger or itask.ready_to_run(now):
-                    # queue the task
-                    itask.state.reset_state(TASK_STATUS_QUEUED)
-                    itask.reset_manual_trigger()
-
-        # 2) submit queued tasks if manually forced or not queue-limited
         ready_tasks = []
         qconfig = self.config.cfg['scheduling']['queues']
+
         for queue in self.queues:
-            # 2.1) count active tasks and compare to queue limit
+            tasks = self.queues[queue].values()
+
+            # 1) queue unqueued tasks that are ready to run or manually forced
+            for itask in tasks:
+                if itask.state.status != TASK_STATUS_QUEUED:
+                    # only need to check that unqueued tasks are ready
+                    if itask.is_ready(now):
+                        # queue the task
+                        itask.state.reset_state(TASK_STATUS_QUEUED)
+                        itask.reset_manual_trigger()
+                        # move the task to the back of the queue
+                        self.queues[queue][itask.identity] = \
+                            self.queues[queue].pop(itask.identity)
+
+            # 2) submit queued tasks if manually forced or not queue-limited
             n_active = 0
             n_release = 0
             n_limit = qconfig[queue]['limit']
             tasks = self.queues[queue].values()
+
+            # 2.1) count active tasks and compare to queue limit
             if n_limit:
                 for itask in tasks:
                     if itask.state.status in [TASK_STATUS_READY,
@@ -606,6 +636,7 @@ class TaskPool(object):
                     n_release -= 1
                     ready_tasks.append(itask)
                     itask.reset_manual_trigger()
+                    # (Set to 'ready' is done just before job submission).
                 # else leaved queued
 
         LOG.debug('%d task(s) de-queued' % len(ready_tasks))
@@ -674,8 +705,7 @@ class TaskPool(object):
                 if itask.tdef.name not in self.myq:
                     continue
                 key = self.myq[itask.tdef.name]
-                if key not in new_queues:
-                    new_queues[key] = {}
+                new_queues.setdefault(key, OrderedDict())
                 new_queues[key][id_] = itask
         self.queues = new_queues
 
@@ -705,13 +735,13 @@ class TaskPool(object):
                         TASK_STATUS_SUBMIT_RETRYING, TASK_STATUS_RETRYING,
                         TASK_STATUS_HELD]:
                     # Remove orphaned task if it hasn't started running yet.
-                    LOG.warning("(task orphaned by suite reload)", itask=itask)
+                    LOG.warning("[%s] -(task orphaned by suite reload)", itask)
                     self.remove(itask)
                 else:
                     # Keep active orphaned task, but stop it from spawning.
                     itask.has_spawned = True
                     LOG.warning(
-                        "last instance (orphaned by reload)", itask=itask)
+                        "[%s] -last instance (orphaned by reload)", itask)
             else:
                 self.remove(itask, '(suite definition reload)')
                 new_task = self.add_to_runahead_pool(TaskProxy(
@@ -719,12 +749,12 @@ class TaskPool(object):
                     itask.state.status, stop_point=itask.stop_point,
                     submit_num=itask.submit_num))
                 new_task.copy_pre_reload(itask)
-                LOG.info('reloaded task definition', itask=itask)
+                LOG.info('[%s] -reloaded task definition', itask)
                 if itask.state.status in TASK_STATUSES_ACTIVE:
                     LOG.warning(
-                        "job(%0d2) active with pre-reload settings" %
-                        itask.submit_num,
-                        itask=itask)
+                        "[%s] -job(%02d) active with pre-reload settings",
+                        itask,
+                        itask.submit_num)
         LOG.info("Reload completed.")
         self.do_reload = False
 
@@ -737,9 +767,9 @@ class TaskPool(object):
                     itask.state.status in [TASK_STATUS_WAITING,
                                            TASK_STATUS_QUEUED]):
                 LOG.warning(
-                    "not running (beyond suite stop cycle) %s" %
-                    self.stop_point,
-                    itask=itask)
+                    "[%s] -not running (beyond suite stop cycle) %s",
+                    itask,
+                    self.stop_point)
                 itask.state.set_held()
 
     def can_stop(self, stop_mode):
@@ -789,8 +819,9 @@ class TaskPool(object):
             return False
         can_be_stalled = False
         for itask in self.get_tasks():
-            if itask.point > self.stop_point or itask.state.status in [
-                    TASK_STATUS_SUCCEEDED, TASK_STATUS_EXPIRED]:
+            if (self.stop_point and itask.point > self.stop_point or
+                    itask.state.status in [
+                        TASK_STATUS_SUCCEEDED, TASK_STATUS_EXPIRED]):
                 # Ignore: Task beyond stop point.
                 # Ignore: Succeeded and expired tasks.
                 continue
@@ -814,7 +845,7 @@ class TaskPool(object):
         return can_be_stalled
 
     def report_stalled_task_deps(self):
-        """Return a set of unmet dependencies"""
+        """Log unmet dependencies on stalled."""
         prereqs_map = {}
         for itask in self.get_tasks():
             if ((itask.state.status == TASK_STATUS_WAITING or
@@ -919,7 +950,7 @@ class TaskPool(object):
         if itask.has_spawned:
             return None
         itask.has_spawned = True
-        LOG.debug('forced spawning', itask=itask)
+        LOG.debug('[%s] -forced spawning', itask)
         next_point = itask.next_point()
         if next_point is None:
             return
@@ -948,7 +979,8 @@ class TaskPool(object):
                 itask.state.status != TASK_STATUS_SUBMIT_FAILED and
                 (
                     itask.tdef.spawn_ahead or
-                    itask.state.is_greater_than(TASK_STATUS_READY)
+                    itask.state.status == TASK_STATUS_EXPIRED or
+                    itask.state.is_gt(TASK_STATUS_READY)
                 )
             ):
                 if self.force_spawn(itask) is not None:
@@ -962,17 +994,17 @@ class TaskPool(object):
         """
         num_removed = 0
         for itask in self.get_tasks():
-            if itask.state.suicide_prerequisites:
-                if itask.state.suicide_prerequisites_satisfied():
-                    if itask.state.status in [TASK_STATUS_READY,
-                                              TASK_STATUS_SUBMITTED,
-                                              TASK_STATUS_RUNNING]:
-                        LOG.warning('suiciding while active', itask=itask)
-                    else:
-                        LOG.info('suiciding', itask=itask)
-                    self.force_spawn(itask)
-                    self.remove(itask, 'suicide')
-                    num_removed += 1
+            if (itask.state.suicide_prerequisites and
+                    itask.state.suicide_prerequisites_are_all_satisfied()):
+                if itask.state.status in [TASK_STATUS_READY,
+                                          TASK_STATUS_SUBMITTED,
+                                          TASK_STATUS_RUNNING]:
+                    LOG.warning('[%s] -suiciding while active', itask)
+                else:
+                    LOG.info('[%s] -suiciding', itask)
+                self.force_spawn(itask)
+                self.remove(itask, 'suicide')
+                num_removed += 1
         return num_removed
 
     def _get_earliest_unsatisfied_point(self):
@@ -1032,29 +1064,20 @@ class TaskPool(object):
         itasks, bad_items = self.filter_task_proxies(items)
         for itask in itasks:
             if not itask.has_spawned:
-                LOG.info("forced spawning", itask=itask)
+                LOG.info("[%s] -forced spawning", itask)
                 self.force_spawn(itask)
         return len(bad_items)
 
     def reset_task_states(self, items, status, outputs):
-        """Reset task states."""
+        """Operator-forced task status reset and output manipulation."""
         itasks, bad_items = self.filter_task_proxies(items)
         for itask in itasks:
             if status and status != itask.state.status:
-                LOG.info("resetting state to %s" % status, itask=itask)
-                if status == TASK_STATUS_READY:
-                    # Pseudo state (in this context) -
-                    # set waiting and satisified.
-                    itask.state.reset_state(TASK_STATUS_WAITING)
-                    itask.state.set_prerequisites_all_satisfied()
-                    itask.state.unset_special_outputs()
-                    itask.state.outputs.set_all_incomplete()
-                else:
-                    itask.state.reset_state(status)
-                    if status in [
-                            TASK_STATUS_FAILED, TASK_STATUS_SUBMIT_FAILED]:
-                        itask.set_event_time('finished',
-                                             get_current_time_string())
+                LOG.info("[%s] -resetting state to %s", itask, status)
+                itask.state.reset_state(status)
+                if status in [TASK_STATUS_FAILED, TASK_STATUS_SUCCEEDED]:
+                    itask.set_summary_time('finished',
+                                           get_current_time_string())
             if outputs:
                 for output in outputs:
                     is_completed = True
@@ -1063,10 +1086,12 @@ class TaskPool(object):
                         output = output[1:]
                     if output == '*' and is_completed:
                         itask.state.outputs.set_all_completed()
-                        LOG.info("reset all output to completed", itask=itask)
+                        LOG.info("[%s] -reset all outputs to completed",
+                                 itask)
                     elif output == '*':
                         itask.state.outputs.set_all_incomplete()
-                        LOG.info("reset all output to incomplete", itask=itask)
+                        LOG.info("[%s] -reset all outputs to incomplete",
+                                 itask)
                     else:
                         ret = itask.state.outputs.set_msg_trg_completion(
                             message=output, is_completed=is_completed)
@@ -1075,16 +1100,15 @@ class TaskPool(object):
                                 trigger=output, is_completed=is_completed)
                         if ret is None:
                             LOG.warning(
-                                "cannot reset output: %s" % output,
-                                itask=itask)
+                                "[%s] -cannot reset output: %s", itask, output)
                         elif ret:
                             LOG.info(
-                                "reset output to complete: %s" % output,
-                                itask=itask)
+                                "[%s] -reset output to complete: %s",
+                                itask, output)
                         else:
                             LOG.info(
-                                "reset output to incomplete: %s" % output,
-                                itask=itask)
+                                "[%s] -reset output to incomplete: %s",
+                                itask, output)
                 self.suite_db_mgr.put_update_task_outputs(itask)
         return len(bad_items)
 
@@ -1098,13 +1122,18 @@ class TaskPool(object):
         return len(bad_items)
 
     def trigger_tasks(self, items, back_out=False):
-        """Trigger tasks."""
+        """Operator-forced task triggering."""
         itasks, bad_items = self.filter_task_proxies(items)
         n_warnings = len(bad_items)
         for itask in itasks:
             if back_out:
                 # (Aborted edit-run, reset for next trigger attempt).
+                try:
+                    del itask.summary['job_hosts'][itask.submit_num]
+                except KeyError:
+                    pass
                 itask.submit_num -= 1
+                itask.summary['submit_num'] = itask.submit_num
                 itask.local_job_file_path = None
                 continue
             if itask.state.status in TASK_STATUSES_ACTIVE:
@@ -1139,61 +1168,53 @@ class TaskPool(object):
     def sim_time_check(self, message_queue):
         """Simulation mode: simulate task run times and set states."""
         sim_task_state_changed = False
+        now = time()
         for itask in self.get_tasks():
             if itask.state.status != TASK_STATUS_RUNNING:
                 continue
+            # Started time is not set on restart
+            if itask.summary['started_time'] is None:
+                itask.summary['started_time'] = now
             timeout = (itask.summary['started_time'] +
                        itask.tdef.rtconfig['job']['simulated run length'])
-            if time() > timeout:
+            if now > timeout:
                 conf = itask.tdef.rtconfig['simulation']
+                job_d = get_task_job_id(
+                    itask.point, itask.tdef.name, itask.submit_num)
+                now_str = get_current_time_string()
                 if (itask.point in conf['fail cycle points'] and
                         (itask.get_try_num() == 1 or
                          not conf['fail try 1 only'])):
                     message_queue.put(
-                        (itask.identity, 'CRITICAL', TASK_STATUS_FAILED))
+                        (job_d, now_str, 'CRITICAL', TASK_STATUS_FAILED))
                 else:
                     # Simulate message outputs.
                     for msg in itask.tdef.rtconfig['outputs'].values():
-                        message_queue.put((itask.identity, 'NORMAL', msg))
+                        message_queue.put((job_d, now_str, 'INFO', msg))
                     message_queue.put(
-                        (itask.identity, 'NORMAL', TASK_STATUS_SUCCEEDED))
+                        (job_d, now_str, 'INFO', TASK_STATUS_SUCCEEDED))
                 sim_task_state_changed = True
         return sim_task_state_changed
 
-    def set_expired_tasks(self):
-        """Check if any waiting tasks expired.
+    def set_expired_task(self, itask, now):
+        """Check if task has expired. Set state and event handler if so.
 
-        Set their status accordingly.
+        Return True if task has expired.
         """
-        now = time()
-        for itask in self.get_tasks():
-            if (itask.state.status != TASK_STATUS_WAITING or
-                    itask.tdef.expiration_offset is None):
-                continue
-            if itask.expire_time is None:
-                itask.expire_time = (
-                    itask.get_point_as_seconds() +
-                    itask.get_offset_as_seconds(itask.tdef.expiration_offset))
-            if now > itask.expire_time:
-                msg = 'Task expired (skipping job).'
-                LOG.warning(msg, itask=itask)
-                self.task_events_mgr.setup_event_handlers(
-                    itask, "expired", msg)
-                itask.state.reset_state(TASK_STATUS_EXPIRED)
-
-    def waiting_tasks_ready(self):
-        """Waiting tasks can become ready for internal reasons.
-
-        Namely clock-triggers or retry-delay timers
-
-        """
-        now = time()
-        result = False
-        for itask in self.get_tasks():
-            if itask.ready_to_run(now):
-                result = True
-                break
-        return result
+        if (itask.state.status != TASK_STATUS_WAITING or
+                itask.tdef.expiration_offset is None):
+            return False
+        if itask.expire_time is None:
+            itask.expire_time = (
+                itask.get_point_as_seconds() +
+                itask.get_offset_as_seconds(itask.tdef.expiration_offset))
+        if now > itask.expire_time:
+            msg = 'Task expired (skipping job).'
+            LOG.warning('[%s] -%s', itask, msg)
+            self.task_events_mgr.setup_event_handlers(itask, "expired", msg)
+            itask.state.reset_state(TASK_STATUS_EXPIRED)
+            return True
+        return False
 
     def task_succeeded(self, id_):
         """Return True if task with id_ is in the succeeded state."""
@@ -1213,10 +1234,10 @@ class TaskPool(object):
                 if itask.state.status == TASK_STATUS_RUNNING:
                     running = True
                 break
-        if running:
-            return True, " running"
-        elif found and exists_only:
+        if found and exists_only:
             return True, "task found"
+        elif running:
+            return True, "task running"
         elif found:
             return False, "task not running"
         else:
@@ -1228,7 +1249,7 @@ class TaskPool(object):
         Result in a dict of a dict:
         {
             "task_id": {
-                "descriptions": {key: value, ...},
+                "meta": {key: value, ...},
                 "prerequisites": {key: value, ...},
                 "outputs": {key: value, ...},
                 "extras": {key: value, ...},
@@ -1249,25 +1270,45 @@ class TaskPool(object):
             extras = {}
             if itask.tdef.clocktrigger_offset is not None:
                 extras['Clock trigger time reached'] = (
-                    itask.start_time_reached(now))
+                    not itask.is_waiting_clock(now))
                 extras['Triggers at'] = get_time_string_from_unix_time(
-                    itask.delayed_start)
+                    itask.clock_trigger_time)
             for trig, satisfied in itask.state.external_triggers.items():
                 if satisfied:
-                    state = 'satisfied'
+                    extras['External trigger "%s"' % trig] = 'satisfied'
                 else:
-                    state = 'NOT satisfied'
-                extras['External trigger "%s"' % trig] = state
+                    extras['External trigger "%s"' % trig] = 'NOT satisfied'
+            for label, satisfied in itask.state.xtriggers.items():
+                if satisfied:
+                    extras['xtrigger "%s"' % label] = 'satisfied'
+                else:
+                    extras['xtrigger "%s"' % label] = 'NOT satisfied'
+            if itask.state.xclock is not None:
+                label, satisfied = itask.state.xclock
+                if satisfied:
+                    extras['xclock "%s"' % label] = 'satisfied'
+                else:
+                    extras['xclock "%s"' % label] = 'NOT satisfied'
 
             outputs = []
             for _, msg, is_completed in itask.state.outputs.get_all():
                 outputs.append(["%s %s" % (itask.identity, msg), is_completed])
             results[itask.identity] = {
-                "descriptions": itask.tdef.describe(),
+                "meta": itask.tdef.describe(),
                 "prerequisites": itask.state.prerequisites_dump(),
                 "outputs": outputs,
                 "extras": extras}
         return results, bad_items
+
+    def check_xtriggers(self):
+        """See if any xtriggers are satisfied."""
+        itasks = self.get_tasks()
+        self.xtrigger_mgr.collate(itasks)
+        for itask in itasks:
+            if itask.state.xclock is not None:
+                self.xtrigger_mgr.satisfy_xclock(itask)
+            if itask.state.xtriggers:
+                self.xtrigger_mgr.satisfy_xtriggers(itask, self.proc_pool)
 
     def filter_task_proxies(self, items):
         """Return task proxies that match names, points, states in items.

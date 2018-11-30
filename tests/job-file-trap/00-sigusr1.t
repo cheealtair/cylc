@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -26,6 +26,7 @@ run_tests() {
     TEST_NAME=$TEST_NAME_BASE-validate
     run_ok $TEST_NAME cylc validate $SUITE_NAME
     TEST_NAME=$TEST_NAME_BASE-run
+    # Needs to be detaching:
     suite_run_ok $TEST_NAME cylc run --reference-test $SUITE_NAME
 
     # Make sure t1.1.1's status file is in place
@@ -42,8 +43,7 @@ run_tests() {
     done
     run_fail "${TEST_NAME_BASE}-t1-status" grep -q '^CYLC_JOB' "${T1_STATUS_FILE}"
     TIMEOUT=$(($(date +%s) + 120))
-    while ! grep -q 'Task job script vacated by signal USR1' \
-                $SUITE_RUN_DIR/log/suite/log \
+    while ! grep -q 'vacated/USR1' $SUITE_RUN_DIR/log/suite/log \
             && (($TIMEOUT > $(date +%s)))
     do
         sleep 1

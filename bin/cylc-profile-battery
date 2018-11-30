@@ -1,6 +1,6 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -45,11 +45,11 @@ experiments can be specified after the -e flag, if not provided the experiment
 "complex" will be chosen. A list of versions to profile against can be
 specified after the -v flag, if not provided the current version will be used.
 
-Experiments are stored in dev/profile-experiments, user experiments can be
+Experiments are stored in etc/profile-experiments, user experiments can be
 stored in .profiling/experiments. Experiments are specified without the file
-extension, experiments in .profiling/ will be chosen before those in dev/.
+extension, experiments in .profiling/ will be chosen before those in etc/.
 
-IMPORTANT: See dev/profile-experiments/example for an experiment template with
+IMPORTANT: See etc/profile-experiments/example for an experiment template with
 further details.
 
 Versions are any valid git identifiers i.e. tags, branches, commits. To compare
@@ -389,7 +389,7 @@ def install_experiments(experiment_ids, experiments, install_dir,
                 string = ''
                 for setting in run['globalrc']:
                     indent = 0
-                    setting = re.split('[\[\]]+', setting.strip())
+                    setting = re.split(r'[\[\]]+', setting.strip())
                     for part in setting[:-1]:  # Key hierarchy.
                         if not part:
                             continue

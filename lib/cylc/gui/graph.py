@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@
 
 import gtk
 
-from cylc.gui.gcapture import gcapture_tmpfile
+from cylc.gui.gcapture import Gcapture
 from cylc.gui.warning_dialog import warning_dialog
 
 
@@ -89,7 +89,7 @@ def graph_suite(reg, start, stop, graph_opts,
     options = graph_opts
     options += ' ' + reg + ' ' + start + ' ' + stop
     command = "cylc graph " + template_opts + " " + options
-    foo = gcapture_tmpfile(command, tmpdir)
+    foo = Gcapture(command, tmpdir)
     gcapture_windows.append(foo)
     foo.run()
     return False

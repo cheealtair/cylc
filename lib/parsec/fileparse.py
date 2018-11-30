@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -37,13 +37,12 @@ import sys
 import re
 import traceback
 
-from parsec import ParsecError
+from jinja2 import TemplateError, UndefinedError
+from parsec import LOG, ParsecError
 from parsec.OrderedDict import OrderedDictWithDefaults
 from parsec.include import inline, IncludeFileNotFoundError
 from parsec.jinja2support import jinja2process
-from jinja2 import TemplateError, UndefinedError
 from parsec.util import itemstr
-import cylc.flags
 
 
 # heading/sections can contain commas (namespace name lists) and any
@@ -71,13 +70,17 @@ _KEY_VALUE = re.compile(
     ''',
     re.VERBOSE)
 
+# Designed to match lines ending '\ ' without matching '\   comment'
+_BAD_CONTINUATION_TRAILING_WHITESPACE = re.compile(
+    r'^([^#\n]+)?\\\s+$', re.VERBOSE)
+
 # quoted value regex reference:
 #   http://stackoverflow.com/questions/5452655/
 #       python-regex-to-match-text-in-single-quotes-
 #           ignoring-escaped-quotes-and-tabs-n
 
-_LINECOMMENT = re.compile('^\s*#')
-_BLANKLINE = re.compile('^\s*$')
+_LINECOMMENT = re.compile(r'^\s*#')
+_BLANKLINE = re.compile(r'^\s*$')
 
 # triple quoted values on one line
 _SINGLE_LINE_SINGLE = re.compile(r"^'''(.*?)'''\s*(#.*)?$")
@@ -117,6 +120,11 @@ def _concatenate(lines):
     maxline = len(lines)
     while index < maxline:
         line = lines[index]
+        # Raise an error if line has a whitespace after the line break
+        if re.match(_BAD_CONTINUATION_TRAILING_WHITESPACE, line):
+            msg = ("Syntax error line {0}: Whitespace after the line "
+                   "continuation character (\\).")
+            raise FileParseError(msg.format(index + 1))
         while line.endswith('\\'):
             if index == maxline - 1:
                 # continuation char on the last line
@@ -137,8 +145,8 @@ def addsect(cfig, sname, parents):
         cfig = cfig[p]
     if sname in cfig:
         # this doesn't warrant a warning unless contained items are repeated
-        if cylc.flags.verbose:
-            print 'Section already encountered: ' + itemstr(parents + [sname])
+        LOG.debug(
+            'Section already encountered: %s', itemstr(parents + [sname]))
     else:
         cfig[sname] = OrderedDictWithDefaults()
 
@@ -151,10 +159,9 @@ def addict(cfig, key, val, parents, index):
 
     if not isinstance(cfig, dict):
         # an item of this name has already been encountered at this level
-        print >> sys.stderr, itemstr(parents, key, val)
         raise FileParseError(
-            'ERROR line ' + str(index) + ': already encountered ' +
-            itemstr(parents))
+            'ERROR line %d: already encountered %s',
+            index, itemstr(parents, key, val))
 
     if key in cfig:
         # this item already exists
@@ -163,18 +170,15 @@ def addict(cfig, key, val, parents, index):
                 len(parents) == 3 and
                 parents[-3:-1] == ['scheduling', 'dependencies'])):
             # append the new graph string to the existing one
-            if cylc.flags.verbose:
-                print 'Merging graph strings under ' + itemstr(parents)
+            LOG.debug('Merging graph strings under %s', itemstr(parents))
             if not isinstance(cfig[key], list):
                 cfig[key] = [cfig[key]]
             cfig[key].append(val)
         else:
             # otherwise override the existing item
-            if cylc.flags.verbose:
-                print >> sys.stderr, (
-                    'WARNING: overriding ' + itemstr(parents, key))
-                print >> sys.stderr, ' old value: ' + cfig[key]
-                print >> sys.stderr, ' new value: ' + val
+            LOG.debug(
+                'overriding %s old value: %s new value: %s',
+                itemstr(parents, key), cfig[key], val)
             cfig[key] = val
     else:
         cfig[key] = val
@@ -233,17 +237,19 @@ def read_and_proc(fpath, template_vars=None, viewcfg=None, asedit=False):
     if os.path.isdir(suite_lib_python) and suite_lib_python not in sys.path:
         sys.path.append(suite_lib_python)
 
-    if cylc.flags.verbose:
-        print "Reading file", fpath
+    LOG.debug('Reading file %s', fpath)
 
     # read the file into a list, stripping newlines
     with open(fpath) as f:
         flines = [line.rstrip('\n') for line in f]
 
     do_inline = True
+    do_empy = True
     do_jinja2 = True
     do_contin = True
     if viewcfg:
+        if not viewcfg['empy']:
+            do_empy = False
         if not viewcfg['jinja2']:
             do_jinja2 = False
         if not viewcfg['contin']:
@@ -259,27 +265,44 @@ def read_and_proc(fpath, template_vars=None, viewcfg=None, asedit=False):
         except IncludeFileNotFoundError, x:
             raise FileParseError(str(x))
 
+    # process with EmPy
+    if do_empy:
+        if flines and re.match(r'^#![Ee]m[Pp]y\s*', flines[0]):
+            LOG.debug('Processing with EmPy')
+            try:
+                from parsec.empysupport import EmPyError, empyprocess
+            except ImportError:
+                raise ParsecError('EmPy Python package must be installed '
+                                  'to process file: ' + fpath)
+
+            try:
+                flines = empyprocess(flines, fdir, template_vars)
+            except EmPyError as exc:
+                lines = flines[max(exc.lineno - 4, 0): exc.lineno]
+                msg = traceback.format_exc()
+                raise FileParseError(msg, lines=lines,
+                                     error_name="EmPyError")
+
     # process with Jinja2
     if do_jinja2:
-        if flines and re.match('^#![jJ]inja2\s*', flines[0]):
-            if cylc.flags.verbose:
-                print "Processing with Jinja2"
+        if flines and re.match(r'^#![jJ]inja2\s*', flines[0]):
+            LOG.debug('Processing with Jinja2')
             try:
                 flines = jinja2process(flines, fdir, template_vars)
-            except (TemplateError, TypeError, UndefinedError) as exc:
+            except (StandardError, TemplateError, UndefinedError) as exc:
                 # Extract diagnostic info from the end of the Jinja2 traceback.
                 exc_lines = traceback.format_exc().splitlines()
                 suffix = []
                 for line in reversed(exc_lines):
                     suffix.append(line)
-                    if re.match("\s*File", line):
+                    if re.match(r"\s*File", line):
                         break
                 msg = '\n'.join(reversed(suffix))
                 lines = None
                 lineno = None
                 if hasattr(exc, 'lineno'):
                     lineno = exc.lineno
-                elif (isinstance(exc, TypeError) or
+                elif (isinstance(exc, StandardError) or
                         isinstance(exc, UndefinedError)):
                     match = re.search(r'File "<template>", line (\d+)', msg)
                     if match:
@@ -314,12 +337,10 @@ def parse(fpath, output_fname=None, template_vars=None):
     if output_fname:
         with open(output_fname, 'wb') as handle:
             handle.write('\n'.join(flines) + '\n')
-        if cylc.flags.verbose:
-            print "Processed configuration dumped: %s" % output_fname
+        LOG.debug('Processed configuration dumped: %s', output_fname)
 
     nesting_level = 0
     config = OrderedDictWithDefaults()
-    sect_name = None
     parents = []
 
     maxline = len(flines) - 1

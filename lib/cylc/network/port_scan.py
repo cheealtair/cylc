@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -20,12 +20,14 @@
 from multiprocessing import cpu_count, Process, Pipe
 import os
 from pwd import getpwall
+import re
 import sys
 from time import sleep, time
 import traceback
+import socket
 from uuid import uuid4
 
-from cylc.cfgspec.globalcfg import GLOBAL_CFG
+from cylc.cfgspec.glbl_cfg import glbl_cfg
 import cylc.flags
 from cylc.hostuserutil import is_remote_host, get_host_ip_by_name
 from cylc.network.httpclient import (
@@ -63,7 +65,14 @@ def _scan_item(timeout, my_uuid, srv_files_mgr, item):
     host, port = item
     host_anon = host
     if is_remote_host(host):
-        host_anon = get_host_ip_by_name(host)  # IP reduces DNS traffic
+        try:
+            host_anon = get_host_ip_by_name(host)  # IP reduces DNS traffic
+        except socket.error as exc:
+            if cylc.flags.debug:
+                raise
+            sys.stderr.write("ERROR: %s: %s\n" % (exc, host))
+            return (host, port, None)
+
     client = SuiteRuntimeServiceClient(
         None, host=host_anon, port=port, my_uuid=my_uuid,
         timeout=timeout, auth=SuiteRuntimeServiceClient.ANON_AUTH)
@@ -134,24 +143,21 @@ def scan_many(items, timeout=None, updater=None):
     todo_set = set()
     wait_set = set()
     # Determine ports to scan
-    base_port = None
-    max_ports = None
+    valid_ports = None
     for item in items:
         if isinstance(item, tuple):
             # Assume item is ("host", port)
             todo_set.add(item)
         else:
             # Full port range for a host
-            if base_port is None or max_ports is None:
-                base_port = GLOBAL_CFG.get(['communication', 'base port'])
-                max_ports = GLOBAL_CFG.get(
-                    ['communication', 'maximum number of ports'])
-            for port in range(base_port, base_port + max_ports):
+            if valid_ports is None:
+                valid_ports = glbl_cfg().get(['suite servers', 'run ports'])
+            for port in valid_ports:
                 todo_set.add((item, port))
     proc_items = []
     results = []
     # Number of child processes
-    max_procs = GLOBAL_CFG.get(["process pool size"])
+    max_procs = glbl_cfg().get(["process pool size"])
     if max_procs is None:
         max_procs = cpu_count()
     try:
@@ -232,6 +238,28 @@ def scan_many(items, timeout=None, updater=None):
     return results
 
 
+def re_compile_filters(patterns_owner=None, patterns_name=None):
+    """Compile regexp for suite owner and suite name scan filters.
+
+    Arguments:
+        patterns_owner (list): List of suite owner patterns
+        patterns_name (list): List of suite name patterns
+
+    Returns (tuple):
+        A 2-element tuple in the form (cre_owner, cre_name). Either or both
+        element can be None to allow for the default scan behaviour.
+    """
+    cres = {'owner': None, 'name': None}
+    for label, items in [('owner', patterns_owner), ('name', patterns_name)]:
+        if items:
+            cres[label] = r'\A(?:' + r')|(?:'.join(items) + r')\Z'
+            try:
+                cres[label] = re.compile(cres[label])
+            except re.error:
+                raise ValueError(r'%s=%s: bad regexp' % (label, items))
+    return (cres['owner'], cres['name'])
+
+
 def get_scan_items_from_fs(owner_pattern=None, updater=None):
     """Get list of host:port available to scan using the file system.
 
@@ -243,7 +271,7 @@ def get_scan_items_from_fs(owner_pattern=None, updater=None):
     srv_files_mgr = SuiteSrvFilesManager()
     if owner_pattern is None:
         # Run directory of current user only
-        run_dirs = [(GLOBAL_CFG.get_host_item('run directory'), None)]
+        run_dirs = [(glbl_cfg().get_host_item('run directory'), None)]
     else:
         # Run directory of all users matching "owner_pattern".
         # But skip those with /nologin or /false shells
@@ -254,7 +282,7 @@ def get_scan_items_from_fs(owner_pattern=None, updater=None):
                 continue
             if owner_pattern.match(pwent.pw_name):
                 run_dirs.append((
-                    GLOBAL_CFG.get_host_item(
+                    glbl_cfg().get_host_item(
                         'run directory',
                         owner=pwent.pw_name,
                         owner_home=pwent.pw_dir),

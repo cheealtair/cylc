@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # ----------------------------------------------------------------------------
-# (C) British Crown Copyright 2013-2017 Met Office.
+# Copyright (C) 2013-2018 British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Lesser General Public License as published by
@@ -21,11 +21,14 @@
 import copy
 import multiprocessing
 import unittest
+import mock
 
 from . import data
 from . import dumpers
 from . import parsers
 from . import parser_spec
+from . import util
+from . import timezone
 
 
 def get_timeduration_tests():
@@ -84,7 +87,7 @@ def get_timedurationparser_tests():
         "P0004-078": {"years": 4, "days": 78},
         "P0004-078T10,5": {"years": 4, "days": 78, "hours": 10.5},
         "P00000020T133702": {"days": 20, "hours": 13, "minutes": 37,
-                             "seconds": 02},
+                             "seconds": 2},
         "-P3YT4H2M": {"years": -3, "hours": -4, "minutes": -2},
         "-PT5M": {"minutes": -5},
         "-P7Y": {"years": -7, "hours": 0}
@@ -605,6 +608,96 @@ def get_timepointparser_tests(allow_only_basic=False,
                     yield tz_expr, tz_info
 
 
+def get_truncated_property_tests():
+    """
+    Tests for largest truncated and
+    smallest missing property names
+    """
+    test_timepoints = {
+        "-9001": {"year": 90,
+                  "month_of_year": 1,
+                  "largest_truncated_property_name": "year_of_century",
+                  "smallest_missing_property_name": "century"},
+        "20960328": {"year": 96,
+                     "month_of_year": 3,
+                     "day_of_month": 28,
+                     "largest_truncated_property_name": None,
+                     "smallest_missing_property_name": None},
+        "-90": {"year": 90,
+                "largest_truncated_property_name": "year_of_century",
+                "smallest_missing_property_name": "century"},
+        "--0501": {"month_of_year": 5, "day_of_month": 1,
+                   "largest_truncated_property_name": "month_of_year",
+                   "smallest_missing_property_name": "year_of_century"},
+        "--12": {"month_of_year": 12,
+                 "largest_truncated_property_name": "month_of_year",
+                 "smallest_missing_property_name": "year_of_century"},
+        "---30": {"day_of_month": 30,
+                  "largest_truncated_property_name": "day_of_month",
+                  "smallest_missing_property_name": "month_of_year"},
+        "98354": {"year": 98,
+                  "day_of_year": 354,
+                  "largest_truncated_property_name": "year_of_century",
+                  "smallest_missing_property_name": "century"},
+        "-034": {"day_of_year": 34,
+                 "largest_truncated_property_name": "day_of_year",
+                 "smallest_missing_property_name": "year_of_century"},
+        "00W031": {"year": 0,
+                   "week_of_year": 3,
+                   "day_of_week": 1,
+                   "largest_truncated_property_name": "year_of_century",
+                   "smallest_missing_property_name": "century"},
+        "99W34": {"year": 99,
+                  "week_of_year": 34,
+                  "largest_truncated_property_name": "year_of_century",
+                  "smallest_missing_property_name": "century"},
+        "-1W02": {"year": 1,
+                  "week_of_year": 2,
+                  "largest_truncated_property_name": "year_of_decade",
+                  "smallest_missing_property_name": "decade_of_century"},
+        "-W031": {"week_of_year": 3,
+                  "day_of_week": 1,
+                  "largest_truncated_property_name": "week_of_year",
+                  "smallest_missing_property_name": "year_of_century"},
+        "-W32": {"week_of_year": 32,
+                 "largest_truncated_property_name": "week_of_year",
+                 "smallest_missing_property_name": "year_of_century"},
+        "-W-1": {"day_of_week": 1,
+                 "largest_truncated_property_name": "day_of_week",
+                 "smallest_missing_property_name": "week_of_year"},
+        "T04:30": {"hour_of_day": 4,
+                   "minute_of_hour": 30,
+                   "largest_truncated_property_name": "hour_of_day",
+                   "smallest_missing_property_name": "day_of_month"},
+        "T19": {"hour_of_day": 19,
+                "largest_truncated_property_name": "hour_of_day",
+                "smallest_missing_property_name": "day_of_month"},
+        "T-56:12": {"minute_of_hour": 56,
+                    "second_of_minute": 12,
+                    "largest_truncated_property_name": "minute_of_hour",
+                    "smallest_missing_property_name": "hour_of_day"},
+        "T-12": {"minute_of_hour": 12,
+                 "largest_truncated_property_name": "minute_of_hour",
+                 "smallest_missing_property_name": "hour_of_day"},
+        "T--45": {"second_of_minute": 45,
+                  "largest_truncated_property_name": "second_of_minute",
+                  "smallest_missing_property_name": "minute_of_hour"},
+        "T-12:34.45": {"minute_of_hour": 12,
+                       "second_of_minute": 34,
+                       "second_of_minute_decimal": 0.45,
+                       "largest_truncated_property_name": "minute_of_hour",
+                       "smallest_missing_property_name": "hour_of_day"},
+        "T-34,2": {"minute_of_hour": 34,
+                   "minute_of_hour_decimal": 0.2,
+                   "largest_truncated_property_name": "minute_of_hour",
+                   "smallest_missing_property_name": "hour_of_day"},
+        "T--59.99": {"second_of_minute": 59,
+                     "second_of_minute_decimal": 0.99,
+                     "largest_truncated_property_name": "second_of_minute",
+                     "smallest_missing_property_name": "minute_of_hour"}}
+    return test_timepoints
+
+
 def get_timepoint_subtract_tests():
     """Yield tests for subtracting one timepoint from another."""
     return [
@@ -632,6 +725,21 @@ def get_timepoint_subtract_tests():
             {"year": 1991, "month_of_year": 5, "day_of_month": 4,
              "hour_of_day": 5, "time_zone_hour": 0, "time_zone_minute": 0},
             "P29DT19H"
+        ),
+        (
+            {"year": 1969, "month_of_year": 7, "day_of_month": 20,
+             "hour_of_day": 20, "time_zone_hour": 0, "time_zone_minute": 0},
+            {"year": 1969, "month_of_year": 7, "day_of_month": 20,
+             "hour_of_day": 19, "time_zone_hour": 0, "time_zone_minute": 0},
+            "PT1H"
+        ),
+
+        (
+            {"year": 1969, "month_of_year": 7, "day_of_month": 20,
+             "hour_of_day": 19, "time_zone_hour": 0, "time_zone_minute": 0},
+            {"year": 1969, "month_of_year": 7, "day_of_month": 20,
+             "hour_of_day": 20, "time_zone_hour": 0, "time_zone_minute": 0},
+            "-PT1H"
         ),
         (
             {"year": 1991, "month_of_year": 5, "day_of_month": 4,
@@ -685,6 +793,34 @@ def get_timepoint_subtract_tests():
              "hour_of_day": 5, "minute_of_hour": 1, "second_of_minute": 2,
              "time_zone_hour": 0, "time_zone_minute": 0},
             "-P762DT18H58M1S"
+        ),
+    ]
+
+
+def get_duration_subtract_tests():
+    """Yield tests for subtracting a duration from a timepoint."""
+    return [
+        (
+            {"year": 2010, "day_of_year": 65,
+             # "month_of_year": 3, "day_of_month": 6,
+             "hour_of_day": 12, "minute_of_hour": 0, "second_of_minute": 0,
+             "time_zone_hour": 0, "time_zone_minute": 0},
+            "P6Y",
+            {"year": 2004,  # "day_of_year": 65,
+             "month_of_year": 3, "day_of_month": 5,
+             "hour_of_day": 12, "minute_of_hour": 0, "second_of_minute": 0,
+             "time_zone_hour": 0, "time_zone_minute": 0}
+        ),
+        (
+            {"year": 2010, "week_of_year": 10, "day_of_week": 3,
+             # "month_of_year": 3, "day_of_month": 10,
+             "hour_of_day": 12, "minute_of_hour": 0, "second_of_minute": 0,
+             "time_zone_hour": 0, "time_zone_minute": 0},
+            "P6Y",
+            {"year": 2004,  # "week_of_year": 10, "day_of_week": 3,
+             "month_of_year": 3, "day_of_month": 3,
+             "hour_of_day": 12, "minute_of_hour": 0, "second_of_minute": 0,
+             "time_zone_hour": 0, "time_zone_minute": 0}
         ),
     ]
 
@@ -910,17 +1046,16 @@ def get_local_time_zone_hours_minutes():
 
 
 class TestSuite(unittest.TestCase):
-
     """Test the functionality of parsers and data model manipulation."""
 
-    def assertEqual(self, test, control, source=None):
+    def assertEqual(self, test, control, info=None):
         """Override the assertEqual method to provide more information."""
-        if source is None:
-            info = None
-        else:
-            info = ("Source %s produced:\n'%s'\nshould be:\n'%s'" %
-                    (source, test, control))
-        super(TestSuite, self).assertEqual(test, control, info)
+        superinfo = None
+        if info is not None:
+            superinfo = (
+                "Source %s produced:\n'%s'\nshould be:\n'%s'" %
+                (info, test, control))
+        super(TestSuite, self).assertEqual(test, control, superinfo)
 
     def test_days_in_year_range(self):
         """Test the summing-over-days-in-year-range shortcut code."""
@@ -935,6 +1070,46 @@ class TestSuite(unittest.TestCase):
                     control_days, test_days, "days in %s to %s" % (
                         start_year, end_year)
                 )
+
+    def test_largest_truncated_property_name(self):
+        """Test the largest truncated property name."""
+
+        parser = parsers.TimePointParser(
+            allow_truncated=True)
+
+        truncated_property_tests = get_truncated_property_tests()
+        for expression in truncated_property_tests.keys():
+            try:
+                test_data = parser.parse(expression)
+            except parsers.ISO8601SyntaxError as syn_exc:
+                raise ValueError("Parsing failed for {0}: {1}".format(
+                    expression, syn_exc))
+
+            self.assertEqual(
+                test_data.get_largest_truncated_property_name(),
+                truncated_property_tests[expression]
+                ["largest_truncated_property_name"],
+                info=expression)
+
+    def test_smallest_missing_property_name(self):
+        """Test the smallest missing property name."""
+
+        parser = parsers.TimePointParser(
+            allow_truncated=True)
+
+        truncated_property_tests = get_truncated_property_tests()
+        for expression in truncated_property_tests.keys():
+            try:
+                test_data = parser.parse(expression)
+            except parsers.ISO8601SyntaxError as syn_exc:
+                raise ValueError("Parsing failed for {0}: {1}".format(
+                    expression, syn_exc))
+
+            self.assertEqual(
+                test_data.get_smallest_missing_property_name(),
+                truncated_property_tests[expression]
+                ["smallest_missing_property_name"],
+                info=expression)
 
     def test_timeduration(self):
         """Test the duration class methods."""
@@ -996,6 +1171,18 @@ class TestSuite(unittest.TestCase):
             self.assertEqual(test_string, ctrl_string,
                              "%s - %s" % (point1, point2))
 
+    def test_duration_subtract(self):
+        """Test subtracting a duration from a timepoint."""
+        parser = parsers.DurationParser()
+        for my_timepoint, my_duration, my_result in (
+                get_duration_subtract_tests()):
+            start_point = data.TimePoint(**my_timepoint)
+            test_duration = parser.parse(my_duration)
+            end_point = data.TimePoint(**my_result)
+            test_subtract = (start_point - test_duration).to_calendar_date()
+            self.assertEqual(str(test_subtract), str(end_point),
+                             "%s - %s" % (start_point, test_duration))
+
     def test_timepoint_time_zone(self):
         """Test the time zone handling of timepoint instances."""
         year = 2000
@@ -1034,35 +1221,30 @@ class TestSuite(unittest.TestCase):
 
                 test_dates[3].set_time_zone(
                     data.TimeZone(hours=8, minutes=30))
-                for date1 in list(test_dates):
-                    date1_str = str(date1)
-                    date_no_tz = date1.copy()
+                for i_test_date in list(test_dates):
+                    i_test_date_str = str(i_test_date)
+                    date_no_tz = i_test_date.copy()
                     date_no_tz.time_zone = data.TimeZone(hours=0, minutes=0)
-
-                    # TODO: https://github.com/metomi/isodatetime/issues/34.
-                    if (date1.time_zone.hours >= 0 or
-                            date1.time_zone.minutes >= 0):
-                        utc_offset = date_no_tz - date1
+                    if (i_test_date.time_zone.hours >= 0 or
+                            i_test_date.time_zone.minutes >= 0):
+                        utc_offset = date_no_tz - i_test_date
                     else:
-                        utc_offset = (date1 - date_no_tz) * -1
-
+                        utc_offset = (i_test_date - date_no_tz) * -1
                     self.assertEqual(utc_offset.hours,
-                                     date1.time_zone.hours,
-                                     date1_str + " utc offset (hrs)")
+                                     i_test_date.time_zone.hours,
+                                     i_test_date_str + " utc offset (hrs)")
                     self.assertEqual(utc_offset.minutes,
-                                     date1.time_zone.minutes,
-                                     date1_str + " utc offset (mins)")
-                    for date2 in list(test_dates):
-                        date2_str = str(date2)
+                                     i_test_date.time_zone.minutes,
+                                     i_test_date_str + " utc offset (mins)")
+                    for j_test_date in list(test_dates):
+                        j_test_date_str = str(j_test_date)
                         self.assertEqual(
-                            date1, date2,
-                            date1_str + " == " + date2_str
-                        )
-                        duration = date2 - date1
+                            i_test_date, j_test_date,
+                            i_test_date_str + " == " + j_test_date_str)
+                        duration = j_test_date - i_test_date
                         self.assertEqual(
                             duration, data.Duration(days=0),
-                            date1_str + " - " + date2_str
-                        )
+                            i_test_date_str + " - " + j_test_date_str)
 
     def test_timepoint_dumper(self):
         """Test the dumping of TimePoint instances."""
@@ -1095,6 +1277,52 @@ class TestSuite(unittest.TestCase):
                     num_expanded_year_digits=num_expanded_year_digits)
                 self.assertRaises(ctrl_exception, dumper.dump,
                                   ctrl_timepoint, format_)
+        value_error_timepoint = data.TimePoint(minute_of_hour=10)
+        value_error_timepoint.minute_of_hour = "1O"
+        self.assertRaises(ValueError, dumper.dump, value_error_timepoint, "%M")
+
+    def test_timepoint_dumper_bounds_error_message(self):
+        """Test the exception text contains the information expected"""
+        the_error = dumpers.TimePointDumperBoundsError("TimePoint1", "year",
+                                                       10, 20)
+        the_string = the_error.__str__()
+        self.assertTrue("TimePoint1" in the_string,
+                        "Failed to find TimePoint1 in {}".format(the_string))
+        self.assertTrue("year" in the_string,
+                        "Failed to find TimePoint1 in {}".format(the_string))
+        self.assertTrue("10" in the_string,
+                        "Failed to find TimePoint1 in {}".format(the_string))
+        self.assertTrue("20" in the_string,
+                        "Failed to find TimePoint1 in {}".format(the_string))
+
+    get_test_timepoint_dumper_get_time_zone = [
+        ["+250:00", None],
+        ["+25:00", ('25', '00')],
+        ["+12:00", ('12', '00')],
+        ["+12:45", ('12', '45')],
+        ["+01:00", ('01', '00')],
+        ["Z", (0, 0)],
+        ["-03:00", (-3, 0)],
+        ["-03:30", (-3, -30)],
+        ["-11:00", (-11, 0)],
+        ["+00:00", ('00', '00')],
+        ["-00:00", (0, 0)]
+    ]
+
+    def test_timepoint_dumper_get_time_zone(self):
+        """Test the time zone returned by TimerPointDumper.get_time_zone"""
+        dumper = dumpers.TimePointDumper(num_expanded_year_digits=2)
+        for value, expected in self.get_test_timepoint_dumper_get_time_zone:
+            tz = dumper.get_time_zone(value)
+            self.assertEqual(expected, tz)
+
+    def test_timepoint_dumper_after_copy(self):
+        """Test that printing the TimePoint attributes works after it has
+        been copied, see issue #102 for more information"""
+        time_point = data.TimePoint(year=2000, truncated=True,
+                                    truncated_dump_format='CCYY')
+        the_copy = time_point.copy()
+        self.assertEqual(str(time_point), str(the_copy))
 
     def test_timepoint_parser(self):
         """Test the parsing of date/time expressions."""
@@ -1367,6 +1595,197 @@ class TestSuite(unittest.TestCase):
             ctrl_data = str(data.TimeRecurrence(**test_info))
             self.assertEqual(test_data, ctrl_data, expression)
 
+    def test_util_cache(self):
+        """Test the cache provided in the util file"""
+        # here we change the cache size to simplify testing when cache is full
+        util.MAX_CACHE_SIZE = 2
+
+        class TempClass(object):
+            times_called = 0
+
+            @util.cache_results
+            def sum(self, x, y):
+                self.times_called += 1
+                return x + y
+        temp_class = TempClass()
+        # call it twice, filling the cache
+        self.assertEqual(3, temp_class.sum(1, 2))
+        self.assertEqual(3, temp_class.sum(2, 1))
+        # next two calls are cached
+        self.assertEqual(3, temp_class.sum(1, 2))
+        self.assertEqual(3, temp_class.sum(2, 1))
+        # this call should remove element from cache
+        self.assertEqual(2, temp_class.sum(1, 1))
+        # in total, we have only three calls, as 2 were cached!
+        self.assertEqual(3, temp_class.times_called)
+
+    # data provider for the test test_get_local_time_zone_no_dst
+    # the format for the parameters is
+    # [tz_seconds, expected_hours, expected_minutes]]
+    get_local_time_zone_no_dst = [
+        [45900, 12, 45],  # pacific/chatham, +12:45
+        [20700, 5, 45],  # asia/kathmandu, +05:45
+        [3600, 1, 0],  # arctic/longyearbyen, +01:00
+        [0, 0, 0],  # UTC
+        [-10800, -3, 0],  # america/sao_paulo, -03:00
+        [-12600, -3, 30]  # america/st_johns, -03:30
+    ]
+
+    @mock.patch('isodatetime.timezone.time')
+    def test_get_local_time_zone_no_dst(self, mock_time):
+        """Test that the hour/minute returned is correct.
+
+        Parts of the time module are mocked so that we can specify scenarios
+        without daylight saving time."""
+        for tz_seconds, expected_hours, expected_minutes in \
+                self.get_local_time_zone_no_dst:
+            # for a pre-defined timezone
+            mock_time.timezone.__neg__.return_value = tz_seconds
+            # time without dst
+            mock_time.daylight = False
+            # and localtime also without dst
+            mock_localtime = mock.Mock()
+            mock_time.localtime.return_value = mock_localtime
+            mock_localtime.tm_isdst = 0
+            hours, minutes = timezone.get_local_time_zone()
+            self.assertEqual(expected_hours, hours)
+            self.assertEqual(expected_minutes, minutes)
+
+    # data provider for the test test_get_local_time_zone_with_dst
+    # the format for the parameters is
+    # [tz_seconds, tz_alt_seconds, expected_hours, expected_minutes]
+    get_local_time_zone_with_dst = [
+        [45900, 49500, 13, 45],  # pacific/chatham, +12:45 and +13:45
+        [43200, 46800, 13, 0],  # pacific/auckland, +12:00 and +13:00
+        [3600, 7200, 2, 0],  # arctic/longyearbyen, +01:00
+        [0, 0, 0, 0],  # UTC
+        [-10800, -7200, -2, 0],  # america/sao_paulo, -03:00 and -02:00,
+        [-12600, -9000, -2, 30]  # america/st_johns, -03:30 and -02:30
+    ]
+
+    @mock.patch('isodatetime.timezone.time')
+    def test_get_local_time_zone_with_dst(self, mock_time):
+        """Test that the hour/minute returned is correct
+
+        Parts of the time module are mocked so that we can specify scenarios
+        with daylight saving time."""
+        for tz_seconds, tz_alt_seconds, expected_hours, expected_minutes in \
+                self.get_local_time_zone_with_dst:
+            # for a pre-defined timezone
+            mock_time.timezone.__neg__.return_value = tz_seconds
+            # time without dst
+            mock_time.daylight = True
+            # and localtime also without dst
+            mock_localtime = mock.MagicMock()
+            mock_time.localtime.return_value = mock_localtime
+            mock_localtime.tm_isdst = 1
+            # and with the following alternative time for when dst is set
+            mock_time.altzone.__neg__.return_value = tz_alt_seconds
+            hours, minutes = timezone.get_local_time_zone()
+            self.assertEqual(expected_hours, hours)
+            self.assertEqual(expected_minutes, minutes)
+
+    # data provider for the test test_get_local_time_zone_format
+    # the format for the parameters is
+    # [tz_seconds, tz_format_mode, expected_format]
+    get_test_get_local_time_zone_format = [
+        # UTC
+        # UTC, returns Z, flags are never used for UTC
+        [0, timezone.TimeZoneFormatMode.normal, "Z"],
+        # Positive values, some with minutes != 0
+        # asia/macao, +08:00
+        [28800, timezone.TimeZoneFormatMode.normal, "+0800"],
+        # asia/macao, +08:00
+        [28800, timezone.TimeZoneFormatMode.extended, "+08:00"],
+        # asia/macao, +08:00
+        [28800, timezone.TimeZoneFormatMode.reduced, "+08"],
+        # pacific/chatham, +12:45
+        [45900, timezone.TimeZoneFormatMode.normal, "+1245"],
+        # pacific/chatham, +12:45
+        [45900, timezone.TimeZoneFormatMode.extended, "+12:45"],
+        # pacific/chatham, +12:45
+        [45900, timezone.TimeZoneFormatMode.reduced, "+1245"],
+        # Negative values, some with minutes != 0
+        # america/buenos_aires, -03:00
+        [-10800, timezone.TimeZoneFormatMode.normal, "-0300"],
+        # america/buenos_aires, -03:00
+        [-10800, timezone.TimeZoneFormatMode.extended, "-03:00"],
+        # america/buenos_aires, -03:00
+        [-10800, timezone.TimeZoneFormatMode.reduced, "-03"],
+        # america/st_johns, -03:30
+        [-12600, timezone.TimeZoneFormatMode.normal, "-0330"],
+        # america/st_johns, -03:30
+        [-12600, timezone.TimeZoneFormatMode.extended, "-03:30"],
+        # america/st_johns, -03:30
+        [-12600, timezone.TimeZoneFormatMode.reduced, "-0330"]
+    ]
+
+    @mock.patch('isodatetime.timezone.time')
+    def test_get_local_time_zone_format(self, mock_time):
+        """Test that the UTC offset string format is correct
+
+        Parts of the time module are mocked so that we can specify scenarios
+        with certain timezone seconds offsets. DST is not really
+        important for this test case"""
+        for tz_seconds, tz_format_mode, expected_format in \
+                self.get_test_get_local_time_zone_format:
+            # for a pre-defined timezone
+            mock_time.timezone.__neg__.return_value = tz_seconds
+            # time without dst
+            mock_time.daylight = False
+            # and localtime also without dst
+            mock_localtime = mock.Mock()
+            mock_time.localtime.return_value = mock_localtime
+            mock_localtime.tm_isdst = 0
+            tz_format = timezone.get_local_time_zone_format(tz_format_mode)
+            self.assertEqual(expected_format, tz_format)
+
+    def test_duration_to_weeks(self):
+        """Test that the duration does not lose precision when converted
+        from days"""
+        duration_in_days = data.Duration(days=365)
+        duration_in_days.to_weeks()
+        duration_in_weeks = data.Duration(weeks=52)
+        self.assertEqual(duration_in_days.weeks, duration_in_weeks.weeks)
+
+    def test_duration_floordiv(self):
+        """Test the existing dunder floordir, which will be removed when we
+        move to Python 3"""
+        duration = data.Duration(years=4, months=4, days=4, hours=4,
+                                 minutes=4, seconds=4)
+        duration //= 2
+        self.assertEqual(2, duration.years)
+        self.assertEqual(2, duration.months)
+        self.assertEqual(2, duration.days)
+        self.assertEqual(2, duration.hours)
+        self.assertEqual(2, duration.minutes)
+        self.assertEqual(2, duration.seconds)
+
+    def test_duration_in_weeks_floordiv(self):
+        """Test the existing dunder floordir, which will be removed when we
+        move to Python 3"""
+        duration = data.Duration(weeks=4)
+        duration //= 2
+        self.assertEqual(2, duration.weeks)
+
+    def test_timepoint_add_duration(self):
+        """Test adding a duration to a timepoint"""
+        seconds_added = 5
+        timepoint = data.TimePoint(year=1900, month_of_year=1, day_of_month=1,
+                                   hour_of_day=1, minute_of_hour=1)
+        duration = data.Duration(seconds=seconds_added)
+        t = timepoint + duration
+        self.assertEqual(seconds_added, t.second_of_minute)
+
+    def test_timepoint_add_duration_without_minute(self):
+        """Test adding a duration to a timepoint"""
+        seconds_added = 5
+        timepoint = data.TimePoint(year=1900, month_of_year=1, day_of_month=1,
+                                   hour_of_day=1)
+        duration = data.Duration(seconds=seconds_added)
+        t = timepoint + duration
+        self.assertEqual(seconds_added, t.second_of_minute)
+
 
 def assert_equal(data1, data2):
     """A function-level equivalent of the unittest method."""
@@ -1406,8 +1825,7 @@ def test_timepoint_at_year(test_year):
         test_data += data.get_days_since_1_ad(year - 1)
         assert_equal(test_data, ctrl_data)
         for attribute, attr_max in test_duration_attributes:
-            delta_attr = random.randrange(0, attr_max)
-            kwargs = {attribute: delta_attr}
+            kwargs = {attribute: random.randrange(0, attr_max)}
             ctrl_data = my_date + datetime.timedelta(**kwargs)
             ctrl_data = (ctrl_data.year, ctrl_data.month, ctrl_data.day)
             test_data = (
@@ -1422,8 +1840,7 @@ def test_timepoint_at_year(test_year):
             assert_equal(test_data, ctrl_data)
         kwargs = {}
         for attribute, attr_max in test_duration_attributes:
-            delta_attr = random.randrange(0, attr_max)
-            kwargs[attribute] = delta_attr
+            kwargs[attribute] = random.randrange(0, attr_max)
         test_date_minus = (
             test_date - data.Duration(**kwargs))
         test_data = test_date - test_date_minus
@@ -1453,5 +1870,5 @@ def test_timepoint_at_year(test_year):
 
 
 if __name__ == "__main__":
-    suite = unittest.TestLoader().loadTestsFromTestCase(TestSuite)
-    unittest.TextTestRunner(verbosity=2).run(suite)
+    unittest.TextTestRunner(verbosity=2).run(
+        unittest.TestLoader().loadTestsFromTestCase(TestSuite))

@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 # 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -33,6 +33,7 @@ run_ok "${TEST_NAME}" cylc show "${SUITE_NAME}" 'f.20000102T00Z'
 cmp_ok "${TEST_NAME}.stdout" << '__OUT__'
 title: (not given)
 description: (not given)
+URL: (not given)
 
 prerequisites (- => not satisfied):
   - 0 & 1 & (2 | (3 & 4)) & 5
@@ -44,9 +45,12 @@ prerequisites (- => not satisfied):
   - 	5 = f.20000101T0000Z succeeded
 
 outputs (- => not completed):
+  - f.20000102T0000Z expired
   - f.20000102T0000Z submitted
+  - f.20000102T0000Z submit-failed
   - f.20000102T0000Z started
   - f.20000102T0000Z succeeded
+  - f.20000102T0000Z failed
 __OUT__
 #-------------------------------------------------------------------------------
 TEST_NAME="${TEST_NAME_BASE}-short"

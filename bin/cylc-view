@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -23,8 +23,7 @@ editor, after optional include-file inlining and Jinja2 preprocessing.
 
 The edit process is spawned in the foreground as follows:
   % <editor> suite.rc
-Where <editor> is defined in the cylc site and user config files
-($CYLC_DIR/conf/global.rc and $HOME/.cylc/global.rc).
+Where <editor> can be set in cylc global config.
 
 For remote host or owner, the suite will be printed to stdout unless
 the '-g,--gui' flag is used to spawn a remote GUI edit session.
@@ -42,7 +41,7 @@ import shlex
 from subprocess import call
 
 import cylc.flags
-from cylc.cfgspec.globalcfg import GLOBAL_CFG
+from cylc.cfgspec.glbl_cfg import glbl_cfg
 from cylc.option_parsers import CylcOptionParser as COP
 from cylc.suite_srv_files_mgr import SuiteSrvFilesManager
 from cylc.templatevars import load_template_vars
@@ -57,6 +56,12 @@ def main():
         default=False, dest="inline")
 
     parser.add_option(
+        "--empy", "-e",
+        help="View after EmPy template processing "
+             "(implies '-i/--inline' as well).",
+        action="store_true", default=False, dest="empy")
+
+    parser.add_option(
         "--jinja2", "-j",
         help="View after Jinja2 template processing "
              "(implies '-i/--inline' as well).",
@@ -64,7 +69,7 @@ def main():
 
     parser.add_option(
         "-p", "--process",
-        help="View after all processing (Jinja2, inlining, "
+        help="View after all processing (EmPy, Jinja2, inlining, "
              "line-continuation joining).",
         action="store_true", default=False, dest="process")
 
@@ -109,19 +114,20 @@ def main():
     options, args = parser.parse_args()
     suite, suiterc = SuiteSrvFilesManager().parse_suite_arg(options, args[0])
 
-    cylc_tmpdir = GLOBAL_CFG.get_tmpdir()
+    cylc_tmpdir = glbl_cfg().get_tmpdir()
     if options.geditor:
-        editor = GLOBAL_CFG.get(['editors', 'gui'])
+        editor = glbl_cfg().get(['editors', 'gui'])
     else:
-        editor = GLOBAL_CFG.get(['editors', 'terminal'])
+        editor = glbl_cfg().get(['editors', 'terminal'])
 
     # read in the suite.rc file
     viewcfg = {'mark': options.mark,
                'single': options.single,
                'label': options.label,
+               'empy': options.empy or options.process,
                'jinja2': options.jinja2 or options.process,
                'contin': options.cat or options.process,
-               'inline': options.inline or options.jinja2 or options.process,
+               'inline': options.inline or options.jinja2 or options.empy or options.process,
                }
     lines = read_and_proc(
         suiterc,

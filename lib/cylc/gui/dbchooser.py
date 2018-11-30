@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -28,7 +28,7 @@ from cylc.gui.util import get_icon, EntryTempText, EntryDialog
 from cylc.network.port_scan import scan_many, get_scan_items_from_fs
 from cylc.suite_srv_files_mgr import SuiteSrvFilesManager
 from cylc.run_get_stdout import run_get_stdout
-from cylc.hostuserutil import is_remote_host, is_remote_user
+from cylc.hostuserutil import is_remote_user
 from cylc.suite_status import KEY_NAME, KEY_OWNER
 
 

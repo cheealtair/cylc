@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -30,12 +30,12 @@ import shutil
 from optparse import OptionParser
 from collections import defaultdict
 
-from cylc.cfgspec.globalcfg import GLOBAL_CFG
+from cylc.cfgspec.glbl_cfg import glbl_cfg
 from cylc.mkdir_p import mkdir_p
 import cylc.flags
 
 OLD_LOGFILE_RE = re.compile(
-    """^
+    r"""^
     ([\w]+)  # task name
     \.
     ([^.]+)  # any cycle time format
@@ -49,7 +49,7 @@ OLD_LOGFILE_RE = re.compile(
 )
 
 OLD_WORKDIR_RE = re.compile(
-    """^
+    r"""^
     ([\w]+)  # task name
     \.
     ([^.]+)  # any cycle time format
@@ -138,7 +138,7 @@ def main():
     if os.path.isdir(arg0):
         rundir = arg0
     else:
-        rundir = GLOBAL_CFG.get_derived_host_item(arg0, "suite run directory")
+        rundir = glbl_cfg().get_derived_host_item(arg0, "suite run directory")
     if not os.path.isdir(rundir):
         sys.exit("ERROR: Directory not found: %s" % rundir)
 

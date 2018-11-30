@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 # 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -27,10 +27,7 @@ run_ok $TEST_NAME cylc validate -v $SUITE_NAME
 #-------------------------------------------------------------------------------
 TEST_NAME=$TEST_NAME_BASE-cmp
 cylc validate -v "${SUITE_NAME}" 2>&1 \
-    | sed \
-    -e "1,/WARNING: deprecated items were automatically upgraded in 'suite/d;" \
-    -e '/Expanding \[runtime\] namespace lists and parameters/,$d' \
-    > 'val.out'
+    | sed  -n -e 's/^.* WARNING - \( \* (.*$\)/\1/p' > 'val.out'
 cmp_ok val.out <<__END__
  * (6.1.3) [visualization][enable live graph movie] - DELETED (OBSOLETE)
  * (6.4.0) [runtime][foo, cat, dog][environment scripting] -> [runtime][foo, cat, dog][env-script] - value unchanged

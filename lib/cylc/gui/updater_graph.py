@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -17,6 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from copy import deepcopy
+import gtk
 import gobject
 import os
 import re
@@ -24,15 +25,16 @@ import threading
 from time import sleep
 import traceback
 
-from cylc.cfgspec.globalcfg import GLOBAL_CFG
+from cylc.cfgspec.glbl_cfg import glbl_cfg
 import cylc.flags
-from cylc.graphing import CGraphPlain
+from cylc.graphing import CGraphPlain, GHOST_TRANSP_HEX, gtk_rgb_to_hex
 from cylc.gui.warning_dialog import warning_dialog
 from cylc.gui.util import get_id_summary
 from cylc.mkdir_p import mkdir_p
 from cylc.network.httpclient import ClientError
 from cylc.task_id import TaskID
 from cylc.task_state import TASK_STATUS_RUNAHEAD
+from cylc.cfgspec.gcylc import GcylcConfig
 
 
 def compare_dict_of_dict(one, two):
@@ -59,6 +61,10 @@ def compare_dict_of_dict(one, two):
 
 
 class GraphUpdater(threading.Thread):
+    """Thread for updating "cylc gui" graph view."""
+
+    PREFIX_BASE = 'base:'
+
     def __init__(self, cfg, updater, theme, info_bar, xdot):
         super(GraphUpdater, self).__init__()
 
@@ -77,7 +83,8 @@ class GraphUpdater(threading.Thread):
         self.best_fit = True  # zoom to page size
         self.normal_fit = False  # zoom to 1.0 scale
         self.crop = False
-        self.subgraphs_on = False   # organise by cycle point.
+        # organise by cycle point.
+        self.subgraphs_on = GcylcConfig.get_inst().get(["sub-graphs on"])
 
         self.descendants = {}
         self.all_families = []
@@ -120,7 +127,7 @@ class GraphUpdater(threading.Thread):
             self.group_all = True
 
         self.graph_frame_count = 0
-        self.suite_share_dir = GLOBAL_CFG.get_derived_host_item(
+        self.suite_share_dir = glbl_cfg().get_derived_host_item(
             self.cfg.suite, 'suite share directory')
 
     def toggle_write_dot_frames(self):
@@ -229,6 +236,12 @@ class GraphUpdater(threading.Thread):
             sleep(0.2)
 
     def update_xdot(self, no_zoom=False):
+        self.graphw.set_def_style(
+            gtk_rgb_to_hex(
+                getattr(self.xdot.widget.style, 'fg', None)[gtk.STATE_NORMAL]),
+            gtk_rgb_to_hex(
+                getattr(self.xdot.widget.style, 'bg', None)[gtk.STATE_NORMAL])
+        )
         self.xdot.set_dotcode(self.graphw.to_string(), no_zoom=no_zoom)
         if self.first_update:
             self.xdot.widget.zoom_to_fit()
@@ -247,17 +260,23 @@ class GraphUpdater(threading.Thread):
             state = self.state_summary[id_]['state']
         else:
             state = self.fam_state_summary[id_]['state']
-
+        # required theme attributes
         try:
             node.attr['style'] = 'bold,' + self.theme[state]['style']
             node.attr['fillcolor'] = self.theme[state]['color']
             node.attr['color'] = self.theme[state]['color']
-            node.attr['fontcolor'] = self.theme[state]['fontcolor']
         except KeyError:
             # unknown state
-            node.attr['style'] = 'unfilled'
+            node.attr['style'] = 'filled'
+            node.attr['fillcolor'] = 'black'
             node.attr['color'] = 'black'
-            node.attr['fontcolor'] = 'black'
+            node.attr['fontcolor'] = 'white'
+
+        # optional theme attributes
+        theme = self.theme.get(state, {})
+        for attr in ['fontcolor']:
+            if attr in theme:
+                node.attr[attr] = theme[attr]
 
         if shape:
             node.attr['shape'] = shape
@@ -316,6 +335,8 @@ class GraphUpdater(threading.Thread):
         self.have_leaves_and_feet = True
         gr_edges, suite_polling_tasks, self.leaves, self.feet = res
         gr_edges = [tuple(edge) for edge in gr_edges]
+        fgcolor = gtk_rgb_to_hex(
+            getattr(self.xdot.widget.style, 'fg', None)[gtk.STATE_NORMAL])
 
         current_id = self.get_graph_id(gr_edges)
         if current_id != self.prev_graph_id:
@@ -396,17 +417,20 @@ class GraphUpdater(threading.Thread):
                     continue
                 if name in self.all_families:
                     node.attr['shape'] = 'doubleoctagon'
+                elif name.startswith('@'):
+                    node.attr['shape'] = 'none'
 
             if self.subgraphs_on:
-                self.graphw.add_cycle_point_subgraphs(gr_edges)
+                self.graphw.add_cycle_point_subgraphs(gr_edges, fgcolor)
 
         # Set base node style defaults
+        fg_ghost = "%s%s" % (fgcolor, GHOST_TRANSP_HEX)
         for node in self.graphw.nodes():
-            node.attr.setdefault('style', 'filled')
-            node.attr['color'] = '#888888'
-            node.attr['fillcolor'] = 'white'
-            node.attr['fontcolor'] = '#888888'
-            node.attr['URL'] = 'base:%s' % node.attr['URL']
+            node.attr['style'] = 'dotted'
+            node.attr['color'] = fg_ghost
+            node.attr['fontcolor'] = fg_ghost
+            if not node.attr['URL'].startswith(self.PREFIX_BASE):
+                node.attr['URL'] = self.PREFIX_BASE + node.attr['URL']
 
         for id_ in self.state_summary:
             try:

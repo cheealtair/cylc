@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -100,7 +100,7 @@ def get_image_dir():
     try:
         cylc_dir = os.environ['CYLC_DIR']
     except KeyError:
-        # This should not happen (unecessary)
+        # This should not happen (unnecessary)
         raise SystemExit("ERROR: $CYLC_DIR is not defined!")
     return os.path.join(cylc_dir, "images")
 
@@ -199,7 +199,7 @@ def set_exception_hook_dialog(program_name=None):
     old_hook = sys.excepthook
     sys.excepthook = lambda e_type, e_value, e_traceback: (
         _launch_exception_hook_dialog(
-            e_type, e_value, e_traceback, sys.excepthook, program_name))
+            e_type, e_value, e_traceback, old_hook, program_name))
 
 
 def setup_icons():

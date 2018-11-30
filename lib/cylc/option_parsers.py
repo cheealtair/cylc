@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -17,9 +17,14 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """Common options for all cylc commands."""
 
+import logging
 from optparse import OptionParser, OptionConflictError
 import os
+import sys
+
+from cylc import LOG
 import cylc.flags
+from cylc.loggingutil import CylcLogFormatter
 
 
 class CylcOptionParser(OptionParser):
@@ -123,14 +128,13 @@ Arguments:"""
         self.add_std_option(
             "-v", "--verbose",
             help="Verbose output mode.",
-            action="store_true", default=False, dest="verbose")
+            action="store_true", dest="verbose",
+            default=(os.getenv("CYLC_VERBOSE", "false").lower() == "true"))
         self.add_std_option(
             "--debug",
-            help=(
-                "Run suites in non-daemon mode, "
-                "and show exception tracebacks."
-            ),
-            action="store_true", default=False, dest="debug")
+            help="Output developer information and show exception tracebacks.",
+            action="store_true", dest="debug",
+            default=(os.getenv("CYLC_DEBUG", "false").lower() == "true"))
 
         if self.prep:
             self.add_std_option(
@@ -152,6 +156,10 @@ Arguments:"""
                 "--use-ssh",
                 help="Use ssh to re-invoke the command on the suite host.",
                 action="store_true", default=False, dest="use_ssh")
+            self.add_std_option(
+                "--ssh-cylc",
+                help="Location of cylc executable on remote ssh commands.",
+                action="store", default="cylc", dest="ssh_cylc")
             self.add_std_option(
                 "--no-login",
                 help=(
@@ -276,6 +284,15 @@ Arguments:"""
 
         cylc.flags.verbose = options.verbose
         cylc.flags.debug = options.debug
+
+        # Set up stream logging
+        if options.debug or options.verbose:
+            LOG.setLevel(logging.DEBUG)
+        else:
+            LOG.setLevel(logging.INFO)
+        errhandler = logging.StreamHandler(sys.stderr)
+        errhandler.setFormatter(CylcLogFormatter())
+        LOG.addHandler(errhandler)
 
         return (options, args)
 

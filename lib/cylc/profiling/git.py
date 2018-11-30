@@ -1,5 +1,5 @@
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -67,7 +67,7 @@ def checkout(branch, delete_pyc=False):
 
 
 def get_commit_date(commit):
-    """Returns the commit date (in unix time) of the profided commit."""
+    """Returns the commit date (in unix time) of the provided commit."""
     try:
         return int(Popen(['git', 'show', '-s', '--format=%at', commit],
                          stdout=PIPE, stderr=PIPE

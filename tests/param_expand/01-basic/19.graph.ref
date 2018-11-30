@@ -1,0 +1,5 @@
+edge "c++.1" "fortran-2008.1"
+graph
+node "c++.1" "c++\n1"
+node "fortran-2008.1" "fortran-2008\n1"
+stop

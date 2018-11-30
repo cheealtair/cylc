@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -34,8 +34,8 @@ def _get_cylc_version():
         # We're running in a cylc git repository, so dynamically determine
         # the cylc version string.  Enclose the path in quotes to handle
         # avoid failure when cylc_dir contains spaces.
-        is_ok, outlines = run_get_stdout(
-            '"%s"' % os.path.join(cylc_dir, "admin", "get-repo-version"))
+        is_ok, outlines = run_get_stdout('"%s"' % os.path.join(
+            cylc_dir, "etc", "dev-bin", "get-repo-version"))
         if is_ok and outlines:
             return outlines[0]
         else:

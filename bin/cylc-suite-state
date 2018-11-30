@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -27,9 +27,6 @@ the time polling commences but allocated polls are consumed waiting for
 it (consider max-polls*interval as an overall timeout).
 
 Note for non-cycling tasks --point=1 must be provided.
-
-Important: cylc suite-state only works with task states and does not work with
-task messages.
 
 For your own suites the database location is determined by your
 site/user config. For other suites, e.g. those owned by others, or
@@ -61,11 +58,12 @@ if remrun():
 import cylc.flags
 from cylc.option_parsers import CylcOptionParser as COP
 from cylc.dbstatecheck import CylcSuiteDBChecker
-from cylc.cfgspec.globalcfg import GLOBAL_CFG
+from cylc.cfgspec.glbl_cfg import glbl_cfg
 from cylc.command_polling import Poller
 from cylc.task_state import TASK_STATUSES_ORDERED
+from cylc.cycling.util import add_offset
 
-from isodatetime.parsers import TimePointParser, DurationParser
+from isodatetime.parsers import TimePointParser
 
 
 class SuitePoller(Poller):
@@ -200,27 +198,10 @@ def main():
 
     # Attempt to apply specified offset to the targeted cycle
     if options.offset:
-        my_parser = TimePointParser()
-        my_target_point = my_parser.parse(options.cycle, dump_as_parsed=True)
-        my_offset_parser = DurationParser()
-
-        oper = "+"
-        if options.offset.startswith("-") or options.offset.startswith("+"):
-            oper = options.offset[0]
-            options.offset = options.offset[1:]
-        if options.offset.startswith("P"):
-            try:
-                my_shift = my_offset_parser.parse(options.offset)
-            except ValueError:
-                sys.exit("ERROR: Cannot parse offset: %s" % options.offset)
-            if oper == "-":
-                my_target_point -= my_shift
-            else:
-                my_target_point += my_shift
-        else:
-            sys.exit("ERROR: Unrecognised offset: %s" % options.offset)
-
-        options.cycle = str(my_target_point)
+        try:
+            options.cycle = str(add_offset(options.cycle, options.offset))
+        except ValueError as exc:
+            sys.exit(exc)
 
     # Exit if both task state and message are to being polled
     if options.status and options.msg:
@@ -239,7 +220,7 @@ def main():
     # re-invocation).
     run_dir = os.path.expandvars(
         os.path.expanduser(
-            options.run_dir or GLOBAL_CFG.get_host_item('run directory')))
+            options.run_dir or glbl_cfg().get_host_item('run directory')))
 
     pollargs = {'suite': suite,
                 'run_dir': run_dir,

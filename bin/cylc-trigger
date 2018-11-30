@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -52,7 +52,8 @@ import cylc.flags
 from cylc.prompt import prompt
 from cylc.option_parsers import CylcOptionParser as COP
 from cylc.network.httpclient import SuiteRuntimeServiceClient
-from cylc.cfgspec.globalcfg import GLOBAL_CFG
+from cylc.cfgspec.glbl_cfg import glbl_cfg
+from cylc.task_job_logs import JOB_LOG_DIFF
 
 
 def main():
@@ -113,7 +114,8 @@ def main():
             old_mtime = None
 
         # Tell the suite server program to generate the job file.
-        pclient.put_command('dry_run_tasks', items=[task_id])
+        pclient.put_command('dry_run_tasks', items=[task_id],
+                            check_syntax=False)
 
         # Wait for the new job file to be written. Use mtime because the same
         # file could potentially exist already, left from a previous run.
@@ -138,9 +140,9 @@ def main():
 
         # Edit the new job file.
         if options.geditor:
-            editor = GLOBAL_CFG.get(['editors', 'gui'])
+            editor = glbl_cfg().get(['editors', 'gui'])
         else:
-            editor = GLOBAL_CFG.get(['editors', 'terminal'])
+            editor = glbl_cfg().get(['editors', 'terminal'])
         # The editor command may have options, e.g. 'emacs -nw'.
         command_list = re.split(' ', editor)
         command_list.append(jobfile_path)
@@ -161,7 +163,8 @@ def main():
             print "Editing done. I'm popping up a confirmation dialog now."
 
         # Save a diff to record the changes made.
-        with open("%s-edit.diff" % jobfile_path, 'wb') as diff_file:
+        difflog = os.path.join(os.path.dirname(jobfile_path), JOB_LOG_DIFF)
+        with open(difflog, 'wb') as diff_file:
             for line in difflib.unified_diff(
                     open(jobfile_copy_path).readlines(),
                     open(jobfile_path).readlines(),
@@ -182,8 +185,7 @@ def main():
             else:
                 # Reset to previous NN symlink and delete the log directory.
                 dirname = os.path.dirname(real_log_dir)
-                os.symlink(os.path.join(dirname, prev_nn),
-                           os.path.join(dirname, "NN"))
+                os.symlink(prev_nn, os.path.join(dirname, "NN"))
                 shutil.rmtree(real_log_dir)
             aborted = True
 

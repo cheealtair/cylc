@@ -1,5 +1,5 @@
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -63,7 +63,7 @@ class SuiteFailedException(Exception):
 
 class ProfilingKilledException(SuiteFailedException):
     """Exception to handle the event that a user has canceled profiling whilst
-    a suite is runnnig."""
+    a suite is running."""
     pass
 
 
@@ -111,7 +111,7 @@ def run_suite(reg, options, out_file, profile_modes, mode='live',
         reg (str): The registration of the suite to run.
         options (list): List of jinja2 setting=value pairs.
         out_file (str): The file to redirect stdout to.
-        profile_modes (list): List of profileing systems to employ
+        profile_modes (list): List of profiling systems to employ
             (i.e. cylc, time).
         mode (str - optional): The mode to run the suite in, simulation, dummy,
             live or validate.
@@ -134,7 +134,7 @@ def run_suite(reg, options, out_file, profile_modes, mode='live',
         else:  # Assume Linux
             cmds += ['/usr/bin/time', '-v']
 
-        # Run using `sh -c` to enable the redirecton of output (darwins
+        # Run using `sh -c` to enable the redirection of output (darwins
         # /usr/bin/time command does not have a -o option).
         cmds += ['sh', '-c', "'"]
 

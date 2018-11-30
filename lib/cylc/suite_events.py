@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,10 +21,10 @@ from collections import namedtuple
 import os
 from pipes import quote
 
-from cylc.cfgspec.globalcfg import GLOBAL_CFG
-from cylc.mp_pool import SuiteProcContext
+from cylc import LOG
+from cylc.cfgspec.glbl_cfg import glbl_cfg
 from cylc.hostuserutil import get_host, get_user
-from cylc.suite_logging import LOG
+from cylc.subprocctx import SubProcContext
 
 
 class SuiteEventError(Exception):
@@ -57,7 +57,7 @@ class SuiteEventHandler(object):
         """Return a named [cylc][[events]] configuration."""
         for getter in [
                 config.cfg['cylc']['events'],
-                GLOBAL_CFG.get(['cylc', 'events'])]:
+                glbl_cfg().get(['cylc', 'events'])]:
             try:
                 value = getter[key]
             except KeyError:
@@ -99,7 +99,7 @@ class SuiteEventHandler(object):
                     'port': ctx.port,
                     'owner': ctx.owner,
                     'suite': ctx.suite}
-            proc_ctx = SuiteProcContext(
+            proc_ctx = SubProcContext(
                 (self.SUITE_EVENT_HANDLER, ctx.event),
                 [
                     'mail',
@@ -111,7 +111,7 @@ class SuiteEventHandler(object):
                 ],
                 env=env,
                 stdin_str=stdin_str)
-            if self.proc_pool.is_closed():
+            if self.proc_pool.closed:
                 # Run command in foreground if process pool is closed
                 self.proc_pool.run_command(proc_ctx)
                 self._run_event_handlers_callback(proc_ctx)
@@ -159,9 +159,9 @@ class SuiteEventHandler(object):
                 # Nothing substituted, assume classic interface
                 cmd = "%s '%s' '%s' '%s'" % (
                     handler, ctx.event, ctx.suite, ctx.reason)
-            proc_ctx = SuiteProcContext(
+            proc_ctx = SubProcContext(
                 cmd_key, cmd, env=dict(os.environ), shell=True)
-            if abort_on_error or self.proc_pool.is_closed():
+            if abort_on_error or self.proc_pool.closed:
                 # Run command in foreground if abort on failure is set or if
                 # process pool is closed
                 self.proc_pool.run_command(proc_ctx)

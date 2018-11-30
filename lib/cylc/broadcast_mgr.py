@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -20,13 +20,13 @@
 import re
 from threading import RLock
 
+from cylc import LOG
 from cylc.broadcast_report import (
     CHANGE_FMT, CHANGE_PREFIX_SET,
     get_broadcast_change_report,
     get_broadcast_bad_options_report)
 from cylc.cycling import PointParsingError
 from cylc.cycling.loader import get_point, standardise_point_string
-from cylc.suite_logging import LOG
 from cylc.task_id import TaskID
 
 
@@ -179,7 +179,7 @@ class BroadcastMgr(object):
 
     def match_ext_trigger(self, itask):
         """Match external triggers for a waiting task proxy."""
-        if not self.ext_triggers:
+        if not self.ext_triggers or not itask.state.external_triggers:
             return
         has_changed = False
         for trig, satisfied in itask.state.external_triggers.items():

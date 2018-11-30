@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 # 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -39,8 +39,10 @@ env LANG='C' sort "${ORIG}" > "${SORTED_ORIG}"
 cmp_ok "${SORTED_ORIG}" "${NAME}"
 
 NAME='select-suite-params.out'
-sqlite3 "${DB_FILE}" 'SELECT key,value FROM suite_params ORDER BY key' \
+sqlite3 "${DB_FILE}" \
+    'SELECT key,value FROM suite_params WHERE key != "uuid_str" ORDER BY key' \
     >"${NAME}"
+sed -i "s/$(cylc --version)/<SOME-VERSION>/g" "${NAME}"
 cmp_ok "${TEST_SOURCE_DIR}/${TEST_NAME_BASE}/${NAME}" "${NAME}"
 
 NAME='select-task-events.out'
@@ -54,7 +56,12 @@ sqlite3 "${DB_FILE}" \
             user_at_host, batch_sys_name
      FROM task_jobs ORDER BY name' \
     >"${NAME}"
-cmp_ok "${TEST_SOURCE_DIR}/${TEST_NAME_BASE}/${NAME}" "${NAME}"
+LOCALHOST="$(hostname -f)"
+cmp_ok - "${NAME}" <<__SELECT__
+1|bar|1|1|0|0|${LOCALHOST}|background
+1|baz|1|1|0|0|${LOCALHOST}|background
+1|foo|1|1|0|0|${LOCALHOST}|background
+__SELECT__
 
 NAME='select-task-jobs-times.out'
 sqlite3 "${DB_FILE}" \

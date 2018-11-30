@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -35,7 +35,7 @@ suite_run_ok "${TEST_NAME_BASE}-run-dummy" \
 suite_run_ok "${TEST_NAME_BASE}-run-simulation" \
     cylc run -m 'simulation' --reference-test --debug --no-detach ${SUITE_NAME}
 
-LOG=$(cylc log --location $SUITE_NAME)
+LOG=$(cylc log -m p $SUITE_NAME)
 count_ok '> meet' ${LOG} 1
 count_ok '> greet' ${LOG} 1
 

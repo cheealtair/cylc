@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -27,6 +27,6 @@ run_ok "${TEST_NAME_BASE}-validate" cylc validate "${SUITE_NAME}"
 suite_run_ok "${TEST_NAME_BASE}" \
     cylc run --reference-test --debug --no-detach "${SUITE_NAME}"
 grep_ok 'ERROR - \[jobs-submit cmd\] (remote host select)' \
-    "$(cylc get-global-config --print-run-dir)/${SUITE_NAME}/log/suite/err"
+    "$(cylc get-global-config --print-run-dir)/${SUITE_NAME}/log/suite/log"
 purge_suite "${SUITE_NAME}"
 exit

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 #
 # Copyright 2008 Jose Fonseca
 #
@@ -1608,10 +1608,6 @@ class DotWidget(gtk.DrawingArea):
             event.area.width, event.area.height
         )
         cr.clip()
-
-        cr.set_source_rgba(1.0, 1.0, 1.0, 1.0)
-        cr.paint()
-
         cr.save()
         rect = self.get_allocation()
         cr.translate(0.5*rect.width, 0.5*rect.height)

@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 # 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -45,7 +45,7 @@ sqlite3 "${DB_FILE}" '
 ' >"${NAME}"
 cmp_ok "${NAME}" <<'__SELECT__'
 1|t1|message critical|You are being critical
-1|t1|message normal|You are normal
+1|t1|message info|You are normal
 1|t1|message warning|You have been warned
 __SELECT__
 

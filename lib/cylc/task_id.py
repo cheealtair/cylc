@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -25,6 +25,7 @@ class TaskID(object):
     """Task ID utilities."""
 
     DELIM = '.'
+    DELIM_RE = r"\."
     DELIM2 = '/'
     NAME_SUFFIX_RE = r"[\w\-+%@]+"
     NAME_SUFFIX_REC = re.compile(r"\A" + NAME_SUFFIX_RE + r"\Z")
@@ -34,6 +35,7 @@ class TaskID(object):
     POINT_REC = re.compile(r"\A" + POINT_RE + r"\Z")
     SYNTAX = 'NAME' + DELIM + 'CYCLE_POINT'
     SYNTAX_OPT_POINT = 'NAME[' + DELIM + 'CYCLE_POINT]'
+    ID_RE = NAME_RE + DELIM_RE + POINT_RE
 
     @classmethod
     def get(cls, name, point):

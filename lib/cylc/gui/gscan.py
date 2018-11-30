@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -27,17 +27,18 @@ import gobject
 from isodatetime.data import (
     get_timepoint_from_seconds_since_unix_epoch as timepoint_from_epoch)
 
-from cylc.cfgspec.gcylc import gcfg
-from cylc.cfgspec.gscan import gsfg
+from cylc.cfgspec.gcylc import GcylcConfig
+from cylc.cfgspec.gscan import GScanConfig
 from cylc.gui.legend import ThemeLegendWindow
 from cylc.gui.dot_maker import DotMaker
 from cylc.gui.scanutil import (
     KEY_PORT, get_scan_menu, launch_gcylc, update_suites_info,
     launch_hosts_dialog, launch_about_dialog)
 from cylc.gui.util import get_icon, setup_icons, set_exception_hook_dialog
+from cylc.network.port_scan import re_compile_filters
 from cylc.suite_status import (
     KEY_GROUP, KEY_META, KEY_STATES, KEY_TASKS_BY_STATE, KEY_TITLE,
-    KEY_UPDATE_TIME)
+    KEY_UPDATE_TIME, KEY_VERSION)
 from cylc.task_state import (
     TASK_STATUSES_ORDERED, TASK_STATUS_RUNAHEAD, TASK_STATUS_FAILED,
     TASK_STATUS_SUBMIT_FAILED)
@@ -47,12 +48,13 @@ class ScanApp(object):
 
     """Summarize running suite statuses for a given set of hosts."""
 
-    WARNINGS_COLUMN = 9
-    STATUS_COLUMN = 8
-    CYCLE_COLUMN = 7
-    UPDATE_TIME_COLUMN = 6
-    TITLE_COLUMN = 5
-    STOPPED_COLUMN = 4
+    WARNINGS_COLUMN = 10
+    STATUS_COLUMN = 9
+    CYCLE_COLUMN = 8
+    UPDATE_TIME_COLUMN = 7
+    TITLE_COLUMN = 6
+    STOPPED_COLUMN = 5
+    VERSION_COLUMN = 4
     SUITE_COLUMN = 3
     OWNER_COLUMN = 2
     HOST_COLUMN = 1
@@ -81,14 +83,15 @@ class ScanApp(object):
 
         self.warnings = {}
 
-        self.theme_name = gcfg.get(['use theme'])
-        self.theme = gcfg.get(['themes', self.theme_name])
+        self.theme_name = GcylcConfig.get_inst().get(['use theme'])
+        self.theme = GcylcConfig.get_inst().get(['themes', self.theme_name])
 
         suite_treemodel = gtk.TreeStore(
             str,  # group
             str,  # host
             str,  # owner
             str,  # suite
+            str,  # version
             bool,  # is_stopped
             str,  # title
             int,  # update_time
@@ -99,6 +102,7 @@ class ScanApp(object):
         self.treeview = gtk.TreeView(suite_treemodel)
 
         # Visibility of columns
+        gsfg = GScanConfig.get_inst()
         vis_cols = gsfg.get(["columns"])
         hide_main_menu_bar = gsfg.get(["hide main menubar"])
         # Doesn't make any sense without suite name column
@@ -110,6 +114,8 @@ class ScanApp(object):
                 (gsfg.COL_HOST, self.HOST_COLUMN, self._set_cell_text_host),
                 (gsfg.COL_OWNER, self.OWNER_COLUMN, self._set_cell_text_owner),
                 (gsfg.COL_SUITE, self.SUITE_COLUMN, self._set_cell_text_name),
+                (gsfg.COL_VERSION, self.VERSION_COLUMN,
+                 self._set_cell_text_version),
                 (gsfg.COL_TITLE, self.TITLE_COLUMN, self._set_cell_text_title),
                 (gsfg.COL_UPDATED, self.UPDATE_TIME_COLUMN,
                  self._set_cell_text_time),
@@ -169,25 +175,15 @@ class ScanApp(object):
         self.treeview.connect("button-press-event",
                               self._on_button_press_event)
 
-        patterns = {"name": None, "owner": None}
-        for label, items in [
-                ("owner", patterns_owner), ("name", patterns_name)]:
-            if items:
-                patterns[label] = r"\A(?:" + r")|(?:".join(items) + r")\Z"
-                try:
-                    patterns[label] = re.compile(patterns[label])
-                except re.error:
-                    raise ValueError("Invalid %s pattern: %s" % (label, items))
+        cre_owner, cre_name = re_compile_filters(patterns_owner, patterns_name)
 
         self.updater = ScanAppUpdater(
             self.window, hosts, suite_treemodel, self.treeview,
-            comms_timeout=comms_timeout, interval=interval,
-            group_column_id=self.GROUP_COLUMN,
-            name_pattern=patterns["name"], owner_pattern=patterns["owner"])
+            comms_timeout, interval, self.GROUP_COLUMN, cre_owner, cre_name)
 
         self.updater.start()
 
-        self.dot_size = gcfg.get(['dot icon size'])
+        self.dot_size = GcylcConfig.get_inst().get(['dot icon size'])
         self.dots = None
         self._set_dots()
 
@@ -302,7 +298,7 @@ class ScanApp(object):
         theme_items[theme] = gtk.RadioMenuItem(label=theme)
         thememenu.append(theme_items[theme])
         theme_items[theme].theme_name = theme
-        for theme in gcfg.get(['themes']):
+        for theme in GcylcConfig.get_inst().get(['themes']):
             if theme == "default":
                 continue
             theme_items[theme] = gtk.RadioMenuItem(
@@ -312,7 +308,7 @@ class ScanApp(object):
 
         # set_active then connect, to avoid causing an unnecessary toggle now.
         theme_items[self.theme_name].set_active(True)
-        for theme in gcfg.get(['themes']):
+        for theme in GcylcConfig.get_inst().get(['themes']):
             theme_items[theme].show()
             theme_items[theme].connect(
                 'toggled',
@@ -433,7 +429,7 @@ class ScanApp(object):
             if not pth:
                 return False
             path, column, cell_x = pth[:3]
-            if column.get_title() == gsfg.COL_STATUS:
+            if column.get_title() == GScanConfig.get_inst().COL_STATUS:
                 dot_offset, dot_width = tuple(column.cell_get_position(
                     column.get_cell_renderers()[1]))
                 if not dot_width:
@@ -548,6 +544,7 @@ class ScanApp(object):
             self._prev_tooltip_location_id = location_id
             tooltip.set_text(None)
             return False
+        gsfg = GScanConfig.get_inst()
         if column.get_title() in [
                 gsfg.COL_HOST, gsfg.COL_OWNER, gsfg.COL_SUITE]:
             tooltip.set_text("%s - %s:%s" % (suite, owner, host))
@@ -707,6 +704,13 @@ class ScanApp(object):
         cell.set_property("sensitive", not is_stopped)
         cell.set_property("text", name)
 
+    def _set_cell_text_version(self, _, cell, model, iter_):
+        """Set cell text for (suite version) "version" column."""
+        value = model.get_value(iter_, self.VERSION_COLUMN)
+        is_stopped = model.get_value(iter_, self.STOPPED_COLUMN)
+        cell.set_property("sensitive", not is_stopped)
+        cell.set_property("text", value)
+
     def _set_cell_text_title(self, _, cell, model, iter_):
         """Set cell text for "title" column."""
         title = model.get_value(iter_, self.TITLE_COLUMN)
@@ -738,7 +742,7 @@ class ScanApp(object):
     def _set_theme(self, new_theme_name):
         """Set GUI theme."""
         self.theme_name = new_theme_name
-        self.theme = gcfg.get(['themes', self.theme_name])
+        self.theme = GcylcConfig.get_inst().get(['themes', self.theme_name])
         self._set_dots()
         self.updater.update()
         self.update_theme_legend()
@@ -759,13 +763,14 @@ class ScanAppUpdater(threading.Thread):
 
     def __init__(self, window, hosts, suite_treemodel, suite_treeview,
                  comms_timeout=None, interval=None, group_column_id=0,
-                 name_pattern=None, owner_pattern=None):
+                 owner_pattern=None, name_pattern=None):
         self.window = window
         if hosts:
             self.hosts = hosts
         else:
             self.hosts = []
         self.comms_timeout = comms_timeout
+        gsfg = GScanConfig.get_inst()
         if interval is None:
             interval = gsfg.get(['suite listing update interval'])
         self.interval_full = interval
@@ -779,8 +784,8 @@ class ScanAppUpdater(threading.Thread):
         self.group_column_id = group_column_id
         self.tasks_by_state = {}
         self.warning_times = {}
-        self.name_pattern = name_pattern
         self.owner_pattern = owner_pattern
+        self.name_pattern = name_pattern
         super(ScanAppUpdater, self).__init__()
 
     @staticmethod
@@ -920,6 +925,7 @@ class ScanAppUpdater(threading.Thread):
             suite_updated_time = suite_info.get(KEY_UPDATE_TIME)
             if suite_updated_time is None:
                 suite_updated_time = int(time())
+            suite_version = suite_info.get(KEY_VERSION, '(< 7.8.0)')
             try:
                 title = suite_info[KEY_META].get(KEY_TITLE)
                 group = suite_info[KEY_META].get(KEY_GROUP)
@@ -928,7 +934,7 @@ class ScanAppUpdater(threading.Thread):
                 title = suite_info.get(KEY_TITLE)
                 group = suite_info.get(KEY_GROUP)
             # For the purpose of this method, it is OK to handle both
-            # witheld (None) and unset (empty string) together
+            # withheld (None) and unset (empty string) together
             if not group:
                 group = self.UNGROUPED
 
@@ -949,7 +955,7 @@ class ScanAppUpdater(threading.Thread):
                 summary_text = "%s - %d" % (
                     group, group_counts[group]['total'])
                 group_iters[group] = self.suite_treemodel.append(None, [
-                    summary_text, None, None, None, False, None,
+                    summary_text, None, None, None, None, False, None,
                     suite_updated_time, None, states_text, None])
 
             tasks = sorted(self._get_warnings(key), reverse=True)
@@ -962,8 +968,8 @@ class ScanAppUpdater(threading.Thread):
                 # Total count of each state
                 parent_iter = self.suite_treemodel.append(
                     group_iters.get(group), [
-                        None, host, owner, suite, is_stopped, title,
-                        suite_updated_time, None,
+                        None, host, owner, suite, suite_version,
+                        is_stopped, title, suite_updated_time, None,
                         self._states_to_text(suite_info[KEY_STATES][0]),
                         warning_text])
                 # Count of each state by cycle points
@@ -974,20 +980,16 @@ class ScanAppUpdater(threading.Thread):
                         continue
                     self.suite_treemodel.append(
                         parent_iter, [
-                            None, None, None, None, is_stopped, None,
-                            suite_updated_time, str(point),
+                            None, None, None, None, None, is_stopped,
+                            None, suite_updated_time, str(point),
                             states_text, warning_text])
             else:
                 # No states in suite_info
                 self.suite_treemodel.append(group_iters.get(group), [
-                    None, host, owner, suite, is_stopped, title,
+                    None, host, owner, suite, suite_version, is_stopped, title,
                     suite_updated_time, None, None, warning_text])
 
         self.suite_treemodel.foreach(self._expand_row, row_ids)
-        if len(hosts) > 1:
-            self.treeview.get_column(ScanApp.HOST_COLUMN).set_visible(True)
-        if len(owners) > 1:
-            self.treeview.get_column(ScanApp.OWNER_COLUMN).set_visible(True)
         return False
 
     def _update_group_counts(self):
@@ -1000,7 +1002,7 @@ class ScanAppUpdater(threading.Thread):
                 # Compat:<=7.5.0
                 group_id = suite_info.get(KEY_GROUP)
             # For the purpose of this method, it is OK to handle both
-            # witheld (None) and unset (empty string) together
+            # withheld (None) and unset (empty string) together
             if not group_id:
                 group_id = self.UNGROUPED
 

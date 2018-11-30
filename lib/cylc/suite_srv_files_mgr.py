@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,13 +21,16 @@
 # imported on demand.
 import os
 import re
+from uuid import uuid4
 from string import ascii_letters, digits
-import sys
 
+from cylc import LOG
+from cylc.cfgspec.glbl_cfg import glbl_cfg
 import cylc.flags
 from cylc.mkdir_p import mkdir_p
 from cylc.hostuserutil import (
-    get_local_ip_address, get_host, get_user, is_remote, is_remote_host)
+    get_local_ip_address, get_host, get_user, is_remote, is_remote_host,
+    is_remote_user)
 
 
 class SuiteServiceFileError(Exception):
@@ -42,6 +45,7 @@ class SuiteSrvFilesManager(object):
     DIR_BASE_AUTH = "auth"
     DIR_BASE_SRV = ".service"
     FILE_BASE_CONTACT = "contact"
+    FILE_BASE_CONTACT2 = "contact2"
     FILE_BASE_PASSPHRASE = "passphrase"
     FILE_BASE_SOURCE = "source"
     FILE_BASE_SSL_CERT = "ssl.cert"
@@ -49,16 +53,19 @@ class SuiteSrvFilesManager(object):
     FILE_BASE_SUITE_RC = "suite.rc"
     KEY_API = "CYLC_API"
     KEY_COMMS_PROTOCOL = "CYLC_COMMS_PROTOCOL"  # default (or none?)
+    KEY_COMMS_PROTOCOL_2 = "CYLC_COMMS_PROTOCOL_2"  # indirect comms
     KEY_DIR_ON_SUITE_HOST = "CYLC_DIR_ON_SUITE_HOST"
     KEY_HOST = "CYLC_SUITE_HOST"
     KEY_NAME = "CYLC_SUITE_NAME"
     KEY_OWNER = "CYLC_SUITE_OWNER"
     KEY_PROCESS = "CYLC_SUITE_PROCESS"
     KEY_PORT = "CYLC_SUITE_PORT"
+    KEY_SSH_USE_LOGIN_SHELL = "CYLC_SSH_USE_LOGIN_SHELL"
     KEY_SUITE_RUN_DIR_ON_SUITE_HOST = "CYLC_SUITE_RUN_DIR_ON_SUITE_HOST"
     KEY_TASK_MSG_MAX_TRIES = "CYLC_TASK_MSG_MAX_TRIES"
     KEY_TASK_MSG_RETRY_INTVL = "CYLC_TASK_MSG_RETRY_INTVL"
     KEY_TASK_MSG_TIMEOUT = "CYLC_TASK_MSG_TIMEOUT"
+    KEY_UUID = "CYLC_SUITE_UUID"
     KEY_VERSION = "CYLC_VERSION"
     NO_TITLE = "No title provided"
     PASSPHRASE_CHARSET = ascii_letters + digits
@@ -99,12 +106,12 @@ class SuiteSrvFilesManager(object):
     def detect_old_contact_file(self, reg, check_host_port=None):
         """Detect old suite contact file.
 
-        If old contact file does not exist, do nothing. If old contact file
-        exists, but suite process is definitely not alive, remove old contact
-        file. If old contact file exists and suite process still alive, raise
-        SuiteServiceFileError. If check_host_port is specified and does not
-        match the (host, port) value in the old contact file, raise
-        AssertionError.
+        If an old contact file does not exist, do nothing. If one does exist
+        but the suite process is definitely not alive, remove it. If one exists
+        and the suite process is still alive, raise SuiteServiceFileError.
+
+        If check_host_port is specified and does not match the (host, port)
+        value in the old contact file, raise AssertionError.
 
         Args:
             reg (str): suite name
@@ -138,8 +145,7 @@ class SuiteSrvFilesManager(object):
         cmd = ["timeout", "10", "ps", self.PS_OPTS, str(old_pid_str)]
         if is_remote_host(old_host):
             import shlex
-            from cylc.cfgspec.globalcfg import GLOBAL_CFG
-            ssh_str = str(GLOBAL_CFG.get_host_item("ssh command", old_host))
+            ssh_str = str(glbl_cfg().get_host_item("ssh command", old_host))
             cmd = shlex.split(ssh_str) + ["-n", old_host] + cmd
         from subprocess import Popen, PIPE
         from time import sleep, time
@@ -153,9 +159,8 @@ class SuiteSrvFilesManager(object):
         fname = self.get_contact_file(reg)
         ret_code = proc.wait()
         out, err = proc.communicate()
-        if cylc.flags.debug and ret_code:
-            sys.stderr.write(
-                "%s  # return %d\n%s\n" % (' '.join(cmd), ret_code, err))
+        if ret_code:
+            LOG.debug("$ %s  # return %d\n%s", ' '.join(cmd), ret_code, err)
         for line in reversed(out.splitlines()):
             if line.strip() == old_proc_str:
                 # Suite definitely still running
@@ -233,7 +238,7 @@ To start a new run, stop the old one first with one or more of these:
         if item not in [
                 self.FILE_BASE_SSL_CERT, self.FILE_BASE_SSL_PEM,
                 self.FILE_BASE_PASSPHRASE, self.FILE_BASE_CONTACT,
-                self.KEY_COMMS_PROTOCOL]:
+                self.FILE_BASE_CONTACT2]:
             raise ValueError("%s: item not recognised" % item)
         if item == self.FILE_BASE_PASSPHRASE:
             self.can_disk_cache_passphrases[(reg, owner, host)] = False
@@ -290,15 +295,19 @@ To start a new run, stop the old one first with one or more of these:
                     return value
 
         # 5/ Use SSH to load content from remote owner@host
-        value = self._load_remote_item(item, reg, owner, host)
-        if value:
-            if item == self.FILE_BASE_PASSPHRASE:
-                self.can_disk_cache_passphrases[(reg, owner, host)] = True
-            if not content:
-                path = self._get_cache_dir(reg, owner, host)
-                self._dump_item(path, item, value)
-                value = os.path.join(path, item)
-            return value
+        # Note: It is not possible to find ".service/contact2" on the suite
+        # host, because it is installed on task host by "cylc remote-init" on
+        # demand.
+        if item != self.FILE_BASE_CONTACT2:
+            value = self._load_remote_item(item, reg, owner, host)
+            if value:
+                if item == self.FILE_BASE_PASSPHRASE:
+                    self.can_disk_cache_passphrases[(reg, owner, host)] = True
+                if not content:
+                    path = self._get_cache_dir(reg, owner, host)
+                    self._dump_item(path, item, value)
+                    value = os.path.join(path, item)
+                return value
 
         raise SuiteServiceFileError("Couldn't get %s" % item)
 
@@ -309,13 +318,22 @@ To start a new run, stop the old one first with one or more of these:
             self.FILE_BASE_SUITE_RC)
 
     def get_suite_source_dir(self, reg, suite_owner=None):
-        """Return the source directory path of a suite."""
+        """Return the source directory path of a suite.
+
+        Will register un-registered suites located in the cylc run dir.
+        """
         srv_d = self.get_suite_srv_dir(reg, suite_owner)
         fname = os.path.join(srv_d, self.FILE_BASE_SOURCE)
         try:
             source = os.readlink(fname)
         except OSError:
-            raise SuiteServiceFileError("ERROR: Suite not found %s" % reg)
+            suite_d = os.path.dirname(srv_d)
+            if os.path.exists(suite_d) and not is_remote_user(suite_owner):
+                # suite exists but is not yet registered
+                self.register(reg=reg, source=suite_d)
+                return suite_d
+            else:
+                raise SuiteServiceFileError("ERROR: Suite not found %s" % reg)
         else:
             if os.path.isabs(source):
                 return source
@@ -329,8 +347,7 @@ To start a new run, stop the old one first with one or more of these:
         run_d = os.getenv("CYLC_SUITE_RUN_DIR")
         if (not run_d or os.getenv("CYLC_SUITE_NAME") != reg or
                 os.getenv("CYLC_SUITE_OWNER") != suite_owner):
-            from cylc.cfgspec.globalcfg import GLOBAL_CFG
-            run_d = GLOBAL_CFG.get_derived_host_item(
+            run_d = glbl_cfg().get_derived_host_item(
                 reg, 'suite run directory')
         return os.path.join(run_d, self.DIR_BASE_SRV)
 
@@ -342,8 +359,7 @@ To start a new run, stop the old one first with one or more of these:
                 rec_regfilter = re.compile(regfilter)
             except re.error as exc:
                 raise ValueError("%s: %s" % (regfilter, exc))
-        from cylc.cfgspec.globalcfg import GLOBAL_CFG
-        run_d = GLOBAL_CFG.get_host_item('run directory')
+        run_d = glbl_cfg().get_host_item('run directory')
         results = []
         for dirpath, dnames, fnames in os.walk(run_d, followlinks=True):
             # Always descend for top directory, but
@@ -365,13 +381,15 @@ To start a new run, stop the old one first with one or more of these:
                     self.get_suite_source_dir(reg),
                     self.get_suite_title(reg)])
             except (IOError, SuiteServiceFileError) as exc:
-                print >> sys.stderr, str(exc)
+                LOG.error('%s: %s', reg, exc)
         return results
 
-    def load_contact_file(self, reg, owner=None, host=None):
+    def load_contact_file(self, reg, owner=None, host=None, file_base=None):
         """Load contact file. Return data as key=value dict."""
+        if not file_base:
+            file_base = self.FILE_BASE_CONTACT
         file_content = self.get_auth_item(
-            self.FILE_BASE_CONTACT, reg, owner, host, content=True)
+            file_base, reg, owner, host, content=True)
         data = {}
         for line in file_content.splitlines():
             key, value = [item.strip() for item in line.split("=", 1)]
@@ -387,6 +405,8 @@ To start a new run, stop the old one first with one or more of these:
         If arg is a file, suite name is the base name of its container
         directory.
         """
+        if arg == '.':
+            arg = os.getcwd()
         try:
             path = self.get_suite_rc(arg, options.suite_owner)
             name = arg
@@ -400,54 +420,91 @@ To start a new run, stop the old one first with one or more of these:
                 name = os.path.basename(os.path.dirname(arg))
         return name, path
 
-    def register(self, reg, source=None):
-        """Generate service files for a suite. Record its source location."""
-        self.detect_old_contact_file(reg)
-        srv_d = self.get_suite_srv_dir(reg)
-        target = os.path.join(srv_d, self.FILE_BASE_SOURCE)
-        if source is None:
-            try:
-                # No change if already registered
-                source_str = os.readlink(target)
-            except OSError:
-                # Source path is assumed to be the run directory
-                source_str = ".."
-        else:
-            # Tidy source path
+    def register(self, reg=None, source=None, redirect=False):
+        """Register a suite, or renew its registration.
+
+        Create suite service directory and symlink to suite source location.
+
+        Args:
+            reg (str): suite name, default basename($PWD).
+            source (str): directory location of suite.rc file, default $PWD.
+            redirect (bool): allow reuse of existing name and run directory.
+
+        Return:
+            The registered suite name (which may be computed here).
+
+        Raise:
+            SuiteServiceFileError:
+                No suite.rc file found in source location.
+                Illegal name (can look like a relative path, but not absolute).
+                Another suite already has this name (unless --redirect).
+        """
+        if reg is None:
+            reg = os.path.basename(os.getcwd())
+
+        if os.path.isabs(reg):
+            raise SuiteServiceFileError(
+                "ERROR: suite name cannot be an absolute path: %s" % reg)
+
+        if source is not None:
             if os.path.basename(source) == self.FILE_BASE_SUITE_RC:
                 source = os.path.dirname(source)
-            if not os.path.isabs(source):
-                # On AIX on GPFS os.path.abspath(source) returns the source
-                # with full 'fileset' prefix. Manual use of $PWD to absolutize
-                # a relative path gives a cleaner result.
-                source = os.path.join(os.getenv("PWD", os.getcwd()), source)
-            source = os.path.normpath(source)
-            if (os.path.abspath(source) ==
-                    os.path.abspath(os.path.dirname(srv_d))):
-                source_str = ".."
-            else:
-                source_str = source
-        # Create target if it does not exist.
-        # Re-create target if it does not point to specified source.
-        mkdir_p(srv_d)
-        try:
-            orig_source_str = os.readlink(target)
-        except OSError:
-            os.symlink(source_str, target)
         else:
-            if orig_source_str != source_str:
-                os.unlink(target)
-                os.symlink(source_str, target)
+            source = os.getcwd()
+
+        # suite.rc must exist so we can detect accidentally reversed args.
+        source = os.path.abspath(source)
+        if not os.path.isfile(os.path.join(source, self.FILE_BASE_SUITE_RC)):
+            raise SuiteServiceFileError("ERROR: no suite.rc in %s" % source)
+
+        # Suite service directory.
+        srv_d = self.get_suite_srv_dir(reg)
+
+        # Does symlink to suite source already exist?
+        target = os.path.join(srv_d, self.FILE_BASE_SOURCE)
+        try:
+            orig_source = os.readlink(target)
+        except OSError:
+            orig_source = None
+
+        # Create service dir if necessary.
+        mkdir_p(srv_d)
+
+        # Redirect an existing name to another suite?
+        if orig_source is not None and source != orig_source:
+            if not redirect:
+                raise SuiteServiceFileError(
+                    "ERROR: the name '%s' already points to %s.\nUse "
+                    "--redirect to re-use an existing name and run "
+                    "directory." % (reg, orig_source))
+            LOG.warning(
+                "the name '%(reg)s' points to %(old)s.\nIt will now"
+                " be redirected to %(new)s.\nFiles in the existing %(reg)s run"
+                " directory will be overwritten.\n",
+                {'reg': reg, 'old': orig_source, 'new': source})
+            # Remove symlink to the original suite.
+            os.unlink(target)
+
+        # Create symlink to the suite, if it doesn't already exist.
+        if source != orig_source:
+            os.symlink(source, target)
+
+        print('REGISTERED %s -> %s' % (reg, source))
+        return reg
+
+    def create_auth_files(self, reg):
+        """Create or renew passphrase and SSL files for suite 'reg'."""
+        # Suite service directory.
+        srv_d = self.get_suite_srv_dir(reg)
+        mkdir_p(srv_d)
 
         # Create a new passphrase for the suite if necessary.
         if not self._locate_item(self.FILE_BASE_PASSPHRASE, srv_d):
             import random
             self._dump_item(srv_d, self.FILE_BASE_PASSPHRASE, ''.join(
                 random.sample(self.PASSPHRASE_CHARSET, self.PASSPHRASE_LEN)))
-
         # Load or create SSL private key for the suite.
         pkey_obj = self._get_ssl_pem(srv_d)
-
         # Load or create SSL certificate for the suite.
         self._get_ssl_cert(srv_d, pkey_obj)
 
@@ -516,7 +573,9 @@ To start a new run, stop the old one first with one or more of these:
         cert_obj.gmtime_adj_notAfter(10 * 365 * 24 * 60 * 60)  # 10 years.
         cert_obj.set_issuer(cert_obj.get_subject())
         cert_obj.set_pubkey(pkey_obj)
-        cert_obj.set_serial_number(1)
+        # Set a random serial number to avoid browser error
+        # SEC_ERROR_REUSED_ISSUER_AND_SERIAL.
+        cert_obj.set_serial_number(uuid4().int)
         cert_obj.add_extensions([ext])
         cert_obj.sign(pkey_obj, 'sha256')
         self._dump_item(
@@ -540,8 +599,7 @@ To start a new run, stop the old one first with one or more of these:
         handle.close()
         fname = os.path.join(path, item)
         os.rename(handle.name, fname)
-        if cylc.flags.verbose:
-            print 'Generated %s' % fname
+        LOG.debug('Generated %s', fname)
 
     def _get_cache_dir(self, reg, owner, host):
         """Return the cache directory for remote suite service files."""
@@ -623,11 +681,10 @@ To start a new run, stop the old one first with one or more of these:
             host = 'localhost'
         if owner is None:
             owner = get_user()
-        from cylc.cfgspec.globalcfg import GLOBAL_CFG
-        if item == 'contact' and not is_remote_host(host):
+        if item == self.FILE_BASE_CONTACT and not is_remote_host(host):
             # Attempt to read suite contact file via the local filesystem.
             path = r'%(run_d)s/%(srv_base)s' % {
-                'run_d': GLOBAL_CFG.get_derived_host_item(
+                'run_d': glbl_cfg().get_derived_host_item(
                     reg, 'suite run directory', 'localhost', owner,
                     replace_home=False),
                 'srv_base': self.DIR_BASE_SRV,
@@ -644,14 +701,14 @@ To start a new run, stop the old one first with one or more of these:
             r'''cat "%(run_d)s/%(srv_base)s/%(item)s"'''
         ) % {
             'prefix': prefix,
-            'run_d': GLOBAL_CFG.get_derived_host_item(
+            'run_d': glbl_cfg().get_derived_host_item(
                 reg, 'suite run directory', host, owner),
             'srv_base': self.DIR_BASE_SRV,
             'item': item
         }
         import shlex
         command = shlex.split(
-            GLOBAL_CFG.get_host_item('ssh command', host, owner))
+            glbl_cfg().get_host_item('ssh command', host, owner))
         command += ['-n', owner + '@' + host, script]
         from subprocess import Popen, PIPE
         try:
@@ -674,16 +731,15 @@ To start a new run, stop the old one first with one or more of these:
             elif line.strip() == prefix:
                 can_read = True
         if not content or ret_code:
-            if cylc.flags.debug:
-                print >> sys.stderr, (
-                    'ERROR: %(command)s # code=%(ret_code)s\n%(err)s\n'
-                ) % {
+            LOG.debug(
+                '$ %(command)s  # code=%(ret_code)s\n%(err)s',
+                {
                     'command': command,
                     # STDOUT may contain passphrase, so not safe to print
                     # 'out': out,
                     'err': err,
                     'ret_code': ret_code,
-                }
+                })
             return
         return content
 

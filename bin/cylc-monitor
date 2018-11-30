@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -32,15 +32,16 @@ import os
 import re
 from time import sleep, time
 
+
 from parsec.OrderedDict import OrderedDict
 from cylc.option_parsers import CylcOptionParser as COP
 from cylc.network.httpclient import SuiteRuntimeServiceClient, ClientError
-from cylc.wallclock import get_time_string_from_unix_time
-from cylc.cfgspec.globalcfg import GLOBAL_CFG
+from cylc.cfgspec.glbl_cfg import glbl_cfg
 from cylc.task_state import (
     TASK_STATUS_RUNAHEAD, TASK_STATUSES_ORDERED,
     TASK_STATUSES_RESTRICTED)
 from cylc.task_state_prop import get_status_prop
+from cylc.wallclock import get_time_string_from_unix_time
 
 
 SUITE_STATUS_SPLIT_REC = re.compile('^([a-z ]+ at )(.*)$')
@@ -73,7 +74,7 @@ The USER_AT_HOST argument allows suite selection by 'cylc scan' output:
             "The state summary line still reflects all task proxies.",
             action="store_true", default=False, dest="restricted")
 
-        def_sort_order = GLOBAL_CFG.get(["monitor", "sort order"])
+        def_sort_order = glbl_cfg().get(["monitor", "sort order"])
 
         self.parser.add_option(
             "-s", "--sort", metavar="ORDER",
@@ -266,4 +267,7 @@ The USER_AT_HOST argument allows suite selection by 'cylc scan' output:
 
 
 if __name__ == "__main__":
-    SuiteMonitor().run()
+    try:
+        SuiteMonitor().run()
+    except KeyboardInterrupt:
+        pass

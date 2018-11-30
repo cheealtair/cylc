@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -23,7 +23,7 @@ import stat
 from subprocess import Popen, PIPE
 
 from cylc.batch_sys_manager import BatchSysManager
-from cylc.cfgspec.globalcfg import GLOBAL_CFG
+from cylc.cfgspec.glbl_cfg import glbl_cfg
 import cylc.flags
 
 
@@ -40,7 +40,7 @@ class JobFileWriter(object):
         self.suite_env.clear()
         self.suite_env.update(suite_env)
 
-    def write(self, local_job_file_path, job_conf):
+    def write(self, local_job_file_path, job_conf, check_syntax=True):
         """Write each job script section in turn."""
 
         # ########### !!!!!!!! WARNING !!!!!!!!!!! #####################
@@ -76,26 +76,27 @@ class JobFileWriter(object):
                 pass
             raise exc
         # check syntax
-        try:
-            proc = Popen(
-                [job_conf['shell'], '-n', tmp_name],
-                stderr=PIPE, stdin=open(os.devnull))
-        except OSError as exc:
-            # Popen has a bad habit of not telling you anything if it fails
-            # to run the executable.
-            if exc.filename is None:
-                exc.filename = job_conf['shell']
-            # Remove temporary file
+        if check_syntax:
             try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
-            raise exc
-        else:
-            if proc.wait():
-                # This will leave behind the temporary file,
-                # which is useful for debugging syntax errors, etc.
-                raise RuntimeError(proc.communicate()[1])
+                proc = Popen(
+                    [job_conf['shell'], '-n', tmp_name],
+                    stderr=PIPE, stdin=open(os.devnull))
+            except OSError as exc:
+                # Popen has a bad habit of not telling you anything if it fails
+                # to run the executable.
+                if exc.filename is None:
+                    exc.filename = job_conf['shell']
+                # Remove temporary file
+                try:
+                    os.unlink(tmp_name)
+                except OSError:
+                    pass
+                raise exc
+            else:
+                if proc.wait():
+                    # This will leave behind the temporary file,
+                    # which is useful for debugging syntax errors, etc.
+                    raise RuntimeError(proc.communicate()[1])
         # Make job file executable
         mode = (
             os.stat(tmp_name).st_mode |
@@ -106,22 +107,23 @@ class JobFileWriter(object):
     @staticmethod
     def _check_script_value(value):
         """Return True if script has any executable statements."""
-        for line in value.splitlines():
-            line = line.strip()
-            if line and not line.startswith("#"):
-                return True
+        if value:
+            for line in value.splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    return True
         return False
 
     @staticmethod
     def _get_derived_host_item(job_conf, key):
-        """Return derived host item from GLOBAL_CFG."""
-        return GLOBAL_CFG.get_derived_host_item(
+        """Return derived host item from glbl_cfg()."""
+        return glbl_cfg().get_derived_host_item(
             job_conf['suite_name'], key, job_conf["host"], job_conf["owner"])
 
     @staticmethod
     def _get_host_item(job_conf, key):
-        """Return host item from GLOBAL_CFG."""
-        return GLOBAL_CFG.get_host_item(
+        """Return host item from glbl_cfg()."""
+        return glbl_cfg().get_host_item(
             key, job_conf["host"], job_conf["owner"])
 
     @staticmethod
@@ -155,7 +157,7 @@ class JobFileWriter(object):
         # Environment variables for prelude
         handle.write("\nexport CYLC_DIR='%s'" % (os.environ['CYLC_DIR']))
         if cylc.flags.debug:
-            handle.write("\nexport CYLC_DEBUG='true'")
+            handle.write("\nexport CYLC_DEBUG=true")
         for key in ['CYLC_VERSION'] + self._get_host_item(
                 job_conf, 'copyable environment variables'):
             if key in os.environ:
@@ -200,12 +202,17 @@ class JobFileWriter(object):
         handle.write(
             '\n    export CYLC_SUITE_DEF_PATH_ON_SUITE_HOST="%s"' %
             os.environ['CYLC_SUITE_DEF_PATH'])
+        handle.write(
+            '\n    export CYLC_SUITE_UUID="%s"' % job_conf['uuid_str'])
 
         handle.write("\n\n    # CYLC TASK ENVIRONMENT:")
         handle.write('\n    export CYLC_TASK_JOB="%s"' % job_conf['job_d'])
         handle.write(
             '\n    export CYLC_TASK_NAMESPACE_HIERARCHY="%s"' %
             ' '.join(job_conf['namespace_hierarchy']))
+        handle.write(
+            '\n    export CYLC_TASK_DEPENDENCIES="%s"' %
+            ' '.join(job_conf['dependencies']))
         handle.write(
             '\n    export CYLC_TASK_TRY_NUMBER=%s' % job_conf['try_num'])
         # Custom parameter environment variables
@@ -220,18 +227,6 @@ class JobFileWriter(object):
             handle.write(
                 "\n    CYLC_TASK_WORK_DIR_BASE='%s'" % job_conf['work_d'])
         handle.write("\n}")
-
-        # SSH comms variables. Note:
-        # For "poll", contact file will not be installed, and job will not
-        # attempt to communicate back.
-        # Otherwise, job will attempt to communicate back via HTTP(S).
-        comms = self._get_host_item(job_conf, 'task communication method')
-        if comms == 'ssh':
-            handle.write("\n\n    # CYLC MESSAGE ENVIRONMENT:")
-            handle.write('\n    export CYLC_TASK_COMMS_METHOD="%s"' % comms)
-            handle.write(
-                '\n    export CYLC_TASK_SSH_LOGIN_SHELL="%s"' %
-                self._get_host_item(job_conf, 'use login shell'))
 
     @staticmethod
     def _write_environment_2(handle, job_conf):
@@ -248,7 +243,7 @@ class JobFileWriter(object):
             #   export FOO=$( ecko foo )  # error not trapped!
             #   FOO=$( ecko foo )  # error trapped
             # The export is done before variable definition to enable
-            # use of already defiend variables by command substitutions
+            # use of already defined variables by command substitutions
             # in later definitions:
             #   FOO='foo'
             #   BAR=$(script_using_FOO)
@@ -301,9 +296,10 @@ class JobFileWriter(object):
     def _write_script(cls, handle, job_conf):
         """Write (*-)script in functions.
 
-        init-script, env-script, err-script, pre-script, script, post-script
+        init-script, env-script, err-script, pre-script, script, post-script,
+        exit-script
         """
-        for prefix in ['init-', 'env-', 'err-', 'pre-', '', 'post-']:
+        for prefix in ['init-', 'env-', 'err-', 'pre-', '', 'post-', 'exit-']:
             value = job_conf[prefix + 'script']
             if cls._check_script_value(value):
                 handle.write("\n\ncylc__job__inst__%sscript() {" % (

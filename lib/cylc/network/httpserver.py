@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -25,29 +25,32 @@ import binascii
 import inspect
 import os
 import random
+import re
 from time import time
 import traceback
 from uuid import uuid4
 
 import cherrypy
-from cylc.cfgspec.globalcfg import GLOBAL_CFG
+
+from cylc import LOG
+from cylc.cfgspec.glbl_cfg import glbl_cfg
 from cylc.exceptions import CylcError
 import cylc.flags
 from cylc.network import (
     NO_PASSPHRASE, PRIVILEGE_LEVELS, PRIV_IDENTITY, PRIV_DESCRIPTION,
     PRIV_FULL_READ, PRIV_SHUTDOWN, PRIV_FULL_CONTROL)
 from cylc.hostuserutil import get_host
-from cylc.suite_logging import ERR, LOG
 from cylc.suite_srv_files_mgr import (
     SuiteSrvFilesManager, SuiteServiceFileError)
 from cylc.unicode_util import utf8_enforce
 from cylc.version import CYLC_VERSION
+from cylc.wallclock import RE_DATE_TIME_FORMAT_EXTENDED
 
 
 class HTTPServer(object):
     """HTTP(S) server by cherrypy, for serving suite runtime API."""
 
-    API = 1
+    API = 2
     LOG_CONNECT_DENIED_TMPL = "[client-connect] DENIED %s@%s:%s %s"
 
     def __init__(self, suite):
@@ -57,13 +60,10 @@ class HTTPServer(object):
         self.port = None
 
         # Figure out the ports we are allowed to use.
-        base_port = GLOBAL_CFG.get(['communication', 'base port'])
-        max_ports = GLOBAL_CFG.get(
-            ['communication', 'maximum number of ports'])
-        self.ok_ports = range(int(base_port), int(base_port) + int(max_ports))
+        self.ok_ports = glbl_cfg().get(['suite servers', 'run ports'])
         random.shuffle(self.ok_ports)
 
-        comms_options = GLOBAL_CFG.get(['communication', 'options'])
+        comms_options = glbl_cfg().get(['communication', 'options'])
 
         # HTTP Digest Auth uses MD5 - pretty secure in this use case.
         # Extending it with extra algorithms is allowed, but won't be
@@ -74,7 +74,7 @@ class HTTPServer(object):
             self.hash_algorithm = "SHA"
 
         self.srv_files_mgr = SuiteSrvFilesManager()
-        self.comms_method = GLOBAL_CFG.get(['communication', 'method'])
+        self.comms_method = glbl_cfg().get(['communication', 'method'])
         self.get_ha1 = cherrypy.lib.auth_digest.get_ha1_dict_plain(
             {
                 'cylc': self.srv_files_mgr.get_auth_item(
@@ -93,7 +93,7 @@ class HTTPServer(object):
                 self.pkey = self.srv_files_mgr.get_auth_item(
                     self.srv_files_mgr.FILE_BASE_SSL_PEM, suite)
             except SuiteServiceFileError:
-                ERR.error("no HTTPS/OpenSSL support. Aborting...")
+                LOG.error("no HTTPS/OpenSSL support. Aborting...")
                 raise CylcError("No HTTPS support. "
                                 "Configure user's global.rc to use HTTP.")
         self.start()
@@ -184,8 +184,8 @@ class HTTPServer(object):
         prog_name, user, host, uuid = _get_client_info()[1:]
         connection_denied = self._get_client_connection_denied()
         if connection_denied:
-            LOG.warning(self.__class__.LOG_CONNECT_DENIED_TMPL % (
-                user, host, prog_name, uuid))
+            LOG.warning(
+                self.LOG_CONNECT_DENIED_TMPL, user, host, prog_name, uuid)
 
 
 class SuiteRuntimeService(object):
@@ -200,6 +200,8 @@ class SuiteRuntimeService(object):
     LOG_IDENTIFY_TMPL = '[client-identify] %d id requests in PT%dS'
     LOG_FORGET_TMPL = '[client-forget] %s'
     LOG_CONNECT_ALLOWED_TMPL = "[client-connect] %s@%s:%s privilege='%s' %s"
+    RE_MESSAGE_TIME = re.compile(
+        r'\A(.+) at (' + RE_DATE_TIME_FORMAT_EXTENDED + r')\Z', re.DOTALL)
 
     def __init__(self, schd):
         self.schd = schd
@@ -243,7 +245,7 @@ class SuiteRuntimeService(object):
 
     @cherrypy.expose
     @cherrypy.tools.json_out()
-    def dry_run_tasks(self, items):
+    def dry_run_tasks(self, items, check_syntax=True):
         """Prepare job file for a task.
 
         items[0] is an identifier for matching a task proxy.
@@ -251,7 +253,9 @@ class SuiteRuntimeService(object):
         self._check_access_priv_and_report(PRIV_FULL_CONTROL)
         if not isinstance(items, list):
             items = [items]
-        self.schd.command_queue.put(("dry_run_tasks", (items,), {}))
+        check_syntax = self._literal_eval('check_syntax', check_syntax)
+        self.schd.command_queue.put(('dry_run_tasks', (items,),
+                                    {'check_syntax': check_syntax}))
         return (True, 'Command queued')
 
     @cherrypy.expose
@@ -496,9 +500,44 @@ class SuiteRuntimeService(object):
     @cherrypy.expose
     @cherrypy.tools.json_out()
     def put_message(self, task_id, severity, message):
+        """(Compat) Put task message.
+
+        Arguments:
+            task_id (str): Task ID in the form "TASK_NAME.CYCLE".
+            severity (str): Severity level of message.
+            message (str): Content of message.
+        """
         self._check_access_priv_and_report(PRIV_FULL_CONTROL, log_info=False)
-        self.schd.message_queue.put((task_id, severity, str(message)))
+        match = self.RE_MESSAGE_TIME.match(message)
+        event_time = None
+        if match:
+            message, event_time = match.groups()
+        self.schd.message_queue.put(
+            (task_id, event_time, severity, message))
         return (True, 'Message queued')
+
+    @cherrypy.expose
+    @cherrypy.tools.json_in()
+    @cherrypy.tools.json_out()
+    def put_messages(self, task_job=None, event_time=None, messages=None):
+        """Put task messages in queue for processing later by the main loop.
+
+        Arguments:
+            task_job (str): Task job in the form "CYCLE/TASK_NAME/SUBMIT_NUM".
+            event_time (str): Event time as string.
+            messages (list): List in the form [[severity, message], ...].
+        """
+        self._check_access_priv_and_report(PRIV_FULL_CONTROL, log_info=False)
+        task_job = utf8_enforce(
+            cherrypy.request.json.get("task_job", task_job))
+        event_time = utf8_enforce(
+            cherrypy.request.json.get("event_time", event_time))
+        messages = utf8_enforce(
+            cherrypy.request.json.get("messages", messages))
+        for severity, message in messages:
+            self.schd.message_queue.put(
+                (task_job, event_time, severity, message))
+        return (True, 'Messages queued: %d' % len(messages))
 
     @cherrypy.expose
     @cherrypy.tools.json_out()
@@ -621,14 +660,7 @@ class SuiteRuntimeService(object):
     @cherrypy.tools.json_out()
     def signout(self):
         """Forget client, where possible."""
-        uuid = _get_client_info()[4]
-        try:
-            del self.clients[uuid]
-        except KeyError:
-            return False
-        else:
-            LOG.debug(self.LOG_FORGET_TMPL % uuid)
-            return True
+        return self._forget_client(_get_client_info()[4])
 
     @cherrypy.expose
     @cherrypy.tools.json_out()
@@ -682,7 +714,7 @@ class SuiteRuntimeService(object):
         return (True, 'Command queued')
 
     def _access_priv_ok(self, required_privilege_level):
-        """Return True if a client is allowed access to info from server_obj.
+        """Return True if a client has enough privilege for given level.
 
         The required privilege level is compared to the level granted to the
         client by the connection validator (held in thread local storage).
@@ -694,7 +726,7 @@ class SuiteRuntimeService(object):
             return False
 
     def _check_access_priv(self, required_privilege_level):
-        """Raise an exception if client privilege is insufficient for server_obj.
+        """Raise an exception if client privilege is insufficient.
 
         (See the documentation above for the boolean version of this function).
 
@@ -726,11 +758,12 @@ class SuiteRuntimeService(object):
         command = inspect.currentframe().f_back.f_code.co_name
         auth_user, prog_name, user, host, uuid = _get_client_info()
         priv_level = self._get_priv_level(auth_user)
-        LOG.debug(self.__class__.LOG_CONNECT_ALLOWED_TMPL % (
-            user, host, prog_name, priv_level, uuid))
+        LOG.debug(
+            self.LOG_CONNECT_ALLOWED_TMPL,
+            user, host, prog_name, priv_level, uuid)
         if cylc.flags.debug or uuid not in self.clients and log_info:
-            LOG.info(self.__class__.LOG_COMMAND_TMPL % (
-                command, user, host, prog_name, uuid))
+            LOG.info(
+                self.LOG_COMMAND_TMPL, command, user, host, prog_name, uuid)
         self.clients.setdefault(uuid, {})
         self.clients[uuid]['time'] = time()
         self._housekeep()
@@ -743,14 +776,12 @@ class SuiteRuntimeService(object):
         interval = now - self._id_start_time
         if interval > self.CLIENT_ID_REPORT_SECONDS:
             rate = float(self._num_id_requests) / interval
-            log = None
             if rate > self.CLIENT_ID_MIN_REPORT_RATE:
-                log = LOG.warning
-            elif cylc.flags.debug:
-                log = LOG.info
-            if log:
-                log(self.__class__.LOG_IDENTIFY_TMPL % (
-                    self._num_id_requests, interval))
+                LOG.warning(
+                    self.LOG_IDENTIFY_TMPL, self._num_id_requests, interval)
+            else:
+                LOG.debug(
+                    self.LOG_IDENTIFY_TMPL, self._num_id_requests, interval)
             self._id_start_time = now
             self._num_id_requests = 0
         uuid = _get_client_info()[4]
@@ -762,17 +793,27 @@ class SuiteRuntimeService(object):
         """Get the privilege level for this authenticated user."""
         if auth_user == "cylc":
             return PRIVILEGE_LEVELS[-1]
-        return self.schd.config.cfg['cylc']['authentication']['public']
+        elif self.schd.config.cfg['cylc']['authentication']['public']:
+            return self.schd.config.cfg['cylc']['authentication']['public']
+        else:
+            return glbl_cfg().get(['authentication', 'public'])
+
+    def _forget_client(self, uuid):
+        """Forget a client."""
+        try:
+            client_info = self.clients.pop(uuid)
+        except KeyError:
+            return False
+        if client_info.get('err_log_handler') is not None:
+            LOG.removeHandler(client_info.get('err_log_handler'))
+        LOG.debug(self.LOG_FORGET_TMPL, uuid)
+        return True
 
     def _housekeep(self):
         """Forget inactive clients."""
         for uuid, client_info in self.clients.copy().items():
             if time() - client_info['time'] > self.CLIENT_FORGET_SEC:
-                try:
-                    del self.clients[uuid]
-                except KeyError:
-                    pass
-                LOG.debug(self.LOG_FORGET_TMPL % uuid)
+                self._forget_client(uuid)
 
     @staticmethod
     def _literal_eval(key, value, default=None):

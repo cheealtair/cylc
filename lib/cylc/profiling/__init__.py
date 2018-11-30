@@ -1,5 +1,5 @@
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -29,7 +29,7 @@ def get_cylc_directory():
         ['cylc', 'version', '--long'],
         stdout=PIPE, stdin=open(os.devnull)).communicate()
     try:
-        return os.path.realpath(re.search('\((.*)\)', ver_str).groups()[0])
+        return os.path.realpath(re.search(r'\((.*)\)', ver_str).groups()[0])
     except IndexError:
         sys.exit('Could not locate local git repository for cylc.')
 
@@ -44,7 +44,7 @@ PROFILE_DIR_NAME = '.profiling'  # Path to profiling directory.
 PROFILE_FILE_NAME = 'results.json'  # Path to profiling results file
 PROFILE_PLOT_DIR_NAME = 'plots'  # Path to default plotting directory.
 USER_EXPERIMENT_DIR_NAME = 'experiments'  # Path to user defined experiments.
-EXPERIMENTS_PATH = os.path.join('dev', 'profile-experiments'
+EXPERIMENTS_PATH = os.path.join('etc', 'profile-experiments'
                                 )  # Path to built-in experiments.
 
 # Ancestor commit for cylc profile-battery
@@ -70,15 +70,17 @@ PROFILE_FILES = {
 
 # ------------- REGEXES ---------------
 # Matches the summary line from the cylc <cmd> --profile output.
-SUMMARY_LINE_REGEX = re.compile('([\d]+) function calls \(([\d]+) primitive'
-                                ' calls\) in ([\d.]+)(?: CPU)? seconds')
+SUMMARY_LINE_REGEX = re.compile(
+    r'([\d]+) function calls \(([\d]+) primitive'
+    r' calls\) in ([\d.]+)(?: CPU)? seconds')
 # Matches the memory checkpoints in the cylc <cmd> --profile output
-MEMORY_LINE_REGEX = re.compile('PROFILE: Memory: ([\d]+) KiB: ([\w.]+): (.*)')
+MEMORY_LINE_REGEX = re.compile(
+    r'PROFILE: Memory: ([\d]+) KiB: ([\w.]+): (.*)')
 # Matches main-loop memory checkpoints in cylc <cmd> --profile output.
-LOOP_MEMORY_LINE_REGEX = re.compile('(?:loop #|end main loop \(total loops )'
-                                    '([\d]+)(?:: |\): )(.*)')
+LOOP_MEMORY_LINE_REGEX = re.compile(
+    r'(?:loop #|end main loop \(total loops )([\d]+)(?:: |\): )(.*)')
 # Matches the sleep function line in cylc <cmd> --profile output.
-SLEEP_FUNCTION_REGEX = re.compile('([\d.]+)[\s]+[\d.]+[\s]+\{time.sleep\}')
+SLEEP_FUNCTION_REGEX = re.compile(r'([\d.]+)[\s]+[\d.]+[\s]+\{time.sleep\}')
 # The string prefixing the suite-startup timestamp (unix time).
 SUITE_STARTUP_STRING = 'SUITE STARTUP: '
 

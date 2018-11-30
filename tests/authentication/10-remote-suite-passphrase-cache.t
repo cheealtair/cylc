@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,20 +21,16 @@
 # remote host.
 CYLC_TEST_IS_GENERIC=false
 . "$(dirname "$0")/test_header"
-
-export CYLC_TEST_HOST=$( \
-    cylc get-global-config -i '[test battery]remote host' 2>'/dev/null')
-if [[ -z "${CYLC_TEST_HOST}" ]]; then
-    skip_all '"[test battery]remote host": not defined'
-fi
+set_test_remote_host
 set_test_number 5
 
 SSH_OPTS='-oBatchMode=yes -oConnectTimeout=5'
 SUITE_NAME="cylctb-${CYLC_TEST_TIME_INIT}/${TEST_SOURCE_DIR_BASE}/${TEST_NAME_BASE}"
 
-cylc register --host="${CYLC_TEST_HOST}" "${SUITE_NAME}"
+ssh ${SSH_OPTS} "${CYLC_TEST_HOST}" mkdir -p "cylc-run/${SUITE_NAME}"
 scp ${SSH_OPTS} -pqr "${TEST_SOURCE_DIR}/${TEST_NAME_BASE}/"* \
     "${CYLC_TEST_HOST}:cylc-run/${SUITE_NAME}"
+cylc register --host="${CYLC_TEST_HOST}" "${SUITE_NAME}" "cylc-run/${SUITE_NAME}"
 run_ok "${TEST_NAME_BASE}-validate" \
     cylc validate --host="${CYLC_TEST_HOST}" "${SUITE_NAME}"
 

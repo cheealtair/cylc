@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 # 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -52,10 +52,11 @@ sqlite3 "${DB_FILE}" \
             user_at_host, batch_sys_name
      FROM task_jobs ORDER BY name' \
     >"${NAME}"
-cmp_ok "${NAME}" <<'__SELECT__'
-1|recover-t1|1|0|0|0|localhost|background
-1|t1|1|0|0|1|localhost|background
-1|t1|2|1|0|0|localhost|background
+LOCALHOST="$(hostname -f)"
+cmp_ok "${NAME}" <<__SELECT__
+1|recover-t1|1|0|0|0|${LOCALHOST}|background
+1|t1|1|0|0|1|${LOCALHOST}|background
+1|t1|2|1|0|0|${LOCALHOST}|background
 __SELECT__
 
 purge_suite "${SUITE_NAME}"

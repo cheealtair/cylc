@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 # 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -19,11 +19,7 @@
 # available. https://github.com/cylc/cylc/issues/1327
 CYLC_TEST_IS_GENERIC=false
 . "$(dirname "$0")/test_header"
-export CYLC_TEST_HOST=$( \
-    cylc get-global-config -i '[test battery]remote host' 2>'/dev/null')
-if [[ -z "${CYLC_TEST_HOST}" ]]; then
-    skip_all '"[test battery]remote host": not defined'
-fi
+set_test_remote_host
 set_test_number 4
 install_suite "${TEST_NAME_BASE}" bad-job-host
 #-------------------------------------------------------------------------------
@@ -42,7 +38,7 @@ for DB_NAME in 'log/db' '.service/db'; do
 done
 suite_run_ok "${TEST_NAME_BASE}-restart" cylc restart --debug --no-detach "${SUITE_NAME}"
 grep_ok 'ERROR - garbage: initialisation did not complete' \
-    "${CYLC_SUITE_RUN_DIR}/log/suite/err"
+    "${CYLC_SUITE_RUN_DIR}/log/suite/log"
 #-------------------------------------------------------------------------------
 purge_suite_remote "${CYLC_TEST_HOST}" "${SUITE_NAME}"
 purge_suite "${SUITE_NAME}"

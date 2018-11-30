@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -25,16 +25,18 @@ This module provides the logic to:
 * Manage existing run database files on restart.
 """
 
+import json
 import os
-import pickle
 from shutil import copy, rmtree
 from subprocess import call
 from tempfile import mkstemp
 
+
+from cylc import LOG
 from cylc.broadcast_report import get_broadcast_change_iter
 from cylc.rundb import CylcSuiteDAO
-from cylc.suite_logging import ERR, LOG
-from cylc.wallclock import get_current_time_string
+from cylc.version import CYLC_VERSION
+from cylc.wallclock import get_current_time_string, get_utc_mode
 
 
 class SuiteDatabaseManager(object):
@@ -51,6 +53,7 @@ class SuiteDatabaseManager(object):
     TABLE_TASK_OUTPUTS = CylcSuiteDAO.TABLE_TASK_OUTPUTS
     TABLE_TASK_STATES = CylcSuiteDAO.TABLE_TASK_STATES
     TABLE_TASK_TIMEOUT_TIMERS = CylcSuiteDAO.TABLE_TASK_TIMEOUT_TIMERS
+    TABLE_XTRIGGERS = CylcSuiteDAO.TABLE_XTRIGGERS
 
     def __init__(self, pri_d=None, pub_d=None):
         self.pri_path = None
@@ -68,7 +71,8 @@ class SuiteDatabaseManager(object):
             self.TABLE_TASK_POOL: [],
             self.TABLE_TASK_ACTION_TIMERS: [],
             self.TABLE_TASK_OUTPUTS: [],
-            self.TABLE_TASK_TIMEOUT_TIMERS: []}
+            self.TABLE_TASK_TIMEOUT_TIMERS: [],
+            self.TABLE_XTRIGGERS: []}
         self.db_inserts_map = {
             self.TABLE_BROADCAST_EVENTS: [],
             self.TABLE_BROADCAST_STATES: [],
@@ -79,7 +83,8 @@ class SuiteDatabaseManager(object):
             self.TABLE_TASK_POOL: [],
             self.TABLE_TASK_ACTION_TIMERS: [],
             self.TABLE_TASK_OUTPUTS: [],
-            self.TABLE_TASK_TIMEOUT_TIMERS: []}
+            self.TABLE_TASK_TIMEOUT_TIMERS: [],
+            self.TABLE_XTRIGGERS: []}
         self.db_updates_map = {}
 
     def checkpoint(self, name):
@@ -112,6 +117,21 @@ class SuiteDatabaseManager(object):
     def get_pri_dao(self):
         """Return the primary DAO."""
         return CylcSuiteDAO(self.pri_path)
+
+    @staticmethod
+    def _namedtuple2json(obj):
+        """Convert nametuple obj to a JSON string.
+
+        Arguments:
+            obj (namedtuple): input object to serialize to JSON.
+
+        Return (str):
+            Serialized JSON string of input object in the form "[type, list]".
+        """
+        if obj is None:
+            return json.dumps(None)
+        else:
+            return json.dumps([type(obj).__name__, obj.__getnewargs__()])
 
     def on_suite_start(self, is_restart):
         """Initialise data access objects.
@@ -231,34 +251,44 @@ class SuiteDatabaseManager(object):
     def put_runtime_inheritance(self, config):
         """Put task/family inheritance in runtime database."""
         for namespace in config.cfg['runtime']:
-            value = ' '.join(config.runtime['linearized ancestors'][namespace])
+            value = config.runtime['linearized ancestors'][namespace]
             self.db_inserts_map[self.TABLE_INHERITANCE].append({
                 "namespace": namespace,
-                "inheritance": value})
+                "inheritance": json.dumps(value)})
 
-    def put_suite_params(
-            self, run_mode, initial_point, final_point, is_held,
-            cycle_point_format=None, warm_point=None):
-        """Put run mode, initial/final cycle point in runtime database.
+    def put_suite_params(self, schd):
+        """Put various suite parameters from schd in runtime database.
 
         This method queues the relevant insert statements.
+
+        Arguments:
+            schd (cylc.scheduler.Scheduler): scheduler object.
         """
+        if schd.final_point is None:
+            # Store None as proper null value in database. No need to do this
+            # for initial cycle point, which should never be None.
+            final_point_str = None
+        else:
+            final_point_str = str(schd.final_point)
         self.db_inserts_map[self.TABLE_SUITE_PARAMS].extend([
-            {"key": "run_mode", "value": run_mode},
-            {"key": "initial_point", "value": str(initial_point)},
-            {"key": "final_point", "value": str(final_point)},
+            {"key": "uuid_str",
+             "value": schd.task_job_mgr.task_remote_mgr.uuid_str},
+            {"key": "run_mode", "value": schd.run_mode},
+            {"key": "cylc_version", "value": CYLC_VERSION},
+            {"key": "UTC_mode", "value": get_utc_mode()},
+            {"key": "initial_point", "value": str(schd.initial_point)},
+            {"key": "final_point", "value": final_point_str},
         ])
-        if cycle_point_format:
-            self.db_inserts_map[self.TABLE_SUITE_PARAMS].append(
-                {"key": "cycle_point_format", "value": str(cycle_point_format)}
-            )
-        if is_held:
-            self.db_inserts_map[self.TABLE_SUITE_PARAMS].append(
-                {"key": "is_held", "value": 1})
-        if warm_point:
-            self.db_inserts_map[self.TABLE_SUITE_PARAMS].append(
-                {"key": "warm_point", "value": str(warm_point)}
-            )
+        if schd.config.cfg['cylc']['cycle point format']:
+            self.db_inserts_map[self.TABLE_SUITE_PARAMS].append({
+                "key": "cycle_point_format",
+                "value": schd.config.cfg['cylc']['cycle point format']})
+        if schd.pool.is_held:
+            self.db_inserts_map[self.TABLE_SUITE_PARAMS].append({
+                "key": "is_held", "value": 1})
+        if schd.cli_start_point_string:
+            self.db_inserts_map[self.TABLE_SUITE_PARAMS].append({
+                "key": "start_point", "value": schd.cli_start_point_string})
 
     def put_suite_template_vars(self, template_vars):
         """Put template_vars in runtime database.
@@ -278,12 +308,20 @@ class SuiteDatabaseManager(object):
                 self.db_inserts_map[self.TABLE_TASK_ACTION_TIMERS].append({
                     "name": name,
                     "cycle": point,
-                    "ctx_key_pickle": pickle.dumps((key1, submit_num,)),
-                    "ctx_pickle": pickle.dumps(timer.ctx),
-                    "delays_pickle": pickle.dumps(timer.delays),
+                    "ctx_key": json.dumps((key1, submit_num,)),
+                    "ctx": self._namedtuple2json(timer.ctx),
+                    "delays": json.dumps(timer.delays),
                     "num": timer.num,
                     "delay": timer.delay,
                     "timeout": timer.timeout})
+
+    def put_xtriggers(self, sat_xtrig):
+        """Put statements to update external triggers table."""
+        self.db_deletes_map[self.TABLE_XTRIGGERS].append({})
+        for sig, res in sat_xtrig.items():
+            self.db_inserts_map[self.TABLE_XTRIGGERS].append({
+                "signature": sig,
+                "results": json.dumps(res)})
 
     def put_task_pool(self, pool):
         """Put statements to update the task_pool table in runtime database.
@@ -304,24 +342,33 @@ class SuiteDatabaseManager(object):
                 "spawned": int(itask.has_spawned),
                 "status": itask.state.status,
                 "hold_swap": itask.state.hold_swap})
-            if itask.state.status in itask.timeout_timers:
+            if itask.timeout is not None:
                 self.db_inserts_map[self.TABLE_TASK_TIMEOUT_TIMERS].append({
                     "name": itask.tdef.name,
                     "cycle": str(itask.point),
-                    "timeout": itask.timeout_timers[itask.state.status]})
-            for ctx_key_0 in ["poll_timers", "try_timers"]:
-                for ctx_key_1, timer in getattr(itask, ctx_key_0).items():
-                    if timer is None:
-                        continue
-                    self.db_inserts_map[self.TABLE_TASK_ACTION_TIMERS].append({
-                        "name": itask.tdef.name,
-                        "cycle": str(itask.point),
-                        "ctx_key_pickle": pickle.dumps((ctx_key_0, ctx_key_1)),
-                        "ctx_pickle": pickle.dumps(timer.ctx),
-                        "delays_pickle": pickle.dumps(timer.delays),
-                        "num": timer.num,
-                        "delay": timer.delay,
-                        "timeout": timer.timeout})
+                    "timeout": itask.timeout})
+            if itask.poll_timer is not None:
+                self.db_inserts_map[self.TABLE_TASK_ACTION_TIMERS].append({
+                    "name": itask.tdef.name,
+                    "cycle": str(itask.point),
+                    "ctx_key": json.dumps("poll_timer"),
+                    "ctx": self._namedtuple2json(itask.poll_timer.ctx),
+                    "delays": json.dumps(itask.poll_timer.delays),
+                    "num": itask.poll_timer.num,
+                    "delay": itask.poll_timer.delay,
+                    "timeout": itask.poll_timer.timeout})
+            for ctx_key_1, timer in itask.try_timers.items():
+                if timer is None:
+                    continue
+                self.db_inserts_map[self.TABLE_TASK_ACTION_TIMERS].append({
+                    "name": itask.tdef.name,
+                    "cycle": str(itask.point),
+                    "ctx_key": json.dumps(("try_timers", ctx_key_1)),
+                    "ctx": self._namedtuple2json(timer.ctx),
+                    "delays": json.dumps(timer.delays),
+                    "num": timer.num,
+                    "delay": timer.delay,
+                    "timeout": timer.timeout})
             if itask.state.time_updated:
                 set_args = {
                     "time_updated": itask.state.time_updated,
@@ -346,6 +393,12 @@ class SuiteDatabaseManager(object):
     def put_insert_task_events(self, itask, args):
         """Put INSERT statement for task_events table."""
         self._put_insert_task_x(CylcSuiteDAO.TABLE_TASK_EVENTS, itask, args)
+
+    def put_insert_task_late_flags(self, itask):
+        """If itask is late, put INSERT statement to task_late_flags table."""
+        if itask.is_late:
+            self._put_insert_task_x(
+                CylcSuiteDAO.TABLE_TASK_LATE_FLAGS, itask, {"value": True})
 
     def put_insert_task_jobs(self, itask, args):
         """Put INSERT statement for task_jobs table."""
@@ -376,17 +429,12 @@ class SuiteDatabaseManager(object):
 
     def put_update_task_outputs(self, itask):
         """Put UPDATE statement for task_outputs table."""
-        items = []
-        for item in sorted(itask.state.outputs.get_completed_customs()):
-            items.append("%s=%s" % item)
+        items = {}
+        for trigger, message in itask.state.outputs.get_completed_customs():
+            items[trigger] = message
         self._put_update_task_x(
             CylcSuiteDAO.TABLE_TASK_OUTPUTS,
-            itask, {"outputs": "\n".join(items)})
-
-    def put_update_task_states(self, itask, set_args):
-        """Put UPDATE statement for task_states table."""
-        self._put_update_task_x(
-            CylcSuiteDAO.TABLE_TASK_STATES, itask, set_args)
+            itask, {"outputs": json.dumps(items)})
 
     def _put_update_task_x(self, table_name, itask, set_args):
         """Put UPDATE statement for a task_* table."""
@@ -433,7 +481,7 @@ class SuiteDatabaseManager(object):
                     os.unlink(os.path.join(suite_run_d, "state.tar.gz"))
                 except OSError:
                     pass
-                ERR.error("cannot tar-gzip + remove old state/ directory")
+                LOG.error("cannot tar-gzip + remove old state/ directory")
             # Remove old files as well
             try:
                 os.unlink(os.path.join(suite_run_d, "cylc-suite-env"))
@@ -455,6 +503,7 @@ class SuiteDatabaseManager(object):
                     pass
         else:
             pri_dao = self.get_pri_dao()
+            pri_dao.upgrade_pickle_to_json()
 
         # Vacuum the primary/private database file
         pri_dao.vacuum()

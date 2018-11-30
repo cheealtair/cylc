@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -17,23 +17,19 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import gtk
-import gobject
 
-from isodatetime.parsers import DurationParser
+from isodatetime.parsers import DurationParser, ISO8601SyntaxError
 
+from cylc.cfgspec.gcylc import HEADINGS
 from cylc.gui.updater_tree import TreeUpdater
 from cylc.task_id import TaskID
 
 
 class ControlTree(object):
     """Text Treeview suite control interface."""
-    headings = [
-        None, 'task', 'state', 'host', 'job system', 'job ID', 'T-submit',
-        'T-start', 'T-finish', 'dT-mean', 'latest message',
-    ]
 
     def __init__(self, cfg, updater, theme, dot_size, info_bar,
-                 get_right_click_menu, log_colors, insert_task_popup):
+                 get_right_click_menu, insert_task_popup):
 
         self.cfg = cfg
         self.updater = updater
@@ -41,7 +37,6 @@ class ControlTree(object):
         self.dot_size = dot_size
         self.info_bar = info_bar
         self.get_right_click_menu = get_right_click_menu
-        self.log_colors = log_colors
         self.insert_task_popup = insert_task_popup
         self.interval_parser = DurationParser()
 
@@ -120,9 +115,9 @@ class ControlTree(object):
         self.ttreeview.connect(
             'button_press_event', self.on_treeview_button_pressed)
 
-        for n in range(1, len(ControlTree.headings)):
+        for n in range(1, len(HEADINGS)):
             # Skip first column (cycle point)
-            tvc = gtk.TreeViewColumn(ControlTree.headings[n])
+            tvc = gtk.TreeViewColumn(HEADINGS[n])
             if n == 1:
                 crp = gtk.CellRendererPixbuf()
                 tvc.pack_start(crp, False)
@@ -223,8 +218,8 @@ class ControlTree(object):
     def sort_by_column(self, col_name=None, col_no=None, ascending=True):
         """Sort this ControlTree by the column selected by the string
         col_name OR by the index col_no."""
-        if col_name is not None and col_name in ControlTree.headings:
-            col_no = ControlTree.headings.index(col_name)
+        if col_name is not None and col_name in HEADINGS:
+            col_no = HEADINGS.index(col_name)
         if col_no is not None:
             self.sort_col_num = col_no
             cols = self.ttreeview.get_columns()
@@ -243,25 +238,19 @@ class ControlTree(object):
             return cmp(point_string1, point_string2)
 
         # Columns do not include the cycle point (0th col), so add 1.
-        if (col_num + 1) == 9:
-            prop1 = (model.get_value(iter1, col_num + 1))
-            prop2 = (model.get_value(iter2, col_num + 1))
+        prop1 = model.get_value(iter1, col_num + 1)
+        prop2 = model.get_value(iter2, col_num + 1)
+        if col_num == 8:  # dT-mean column, convert intervals to seconds
             prop1 = self._get_interval_in_seconds(prop1)
             prop2 = self._get_interval_in_seconds(prop2)
-        else:
-            prop1 = model.get_value(iter1, col_num + 1)
-            prop2 = model.get_value(iter2, col_num + 1)
         return cmp(prop1, prop2)
 
     def _get_interval_in_seconds(self, val):
         """Convert the IOS 8601 date/time to seconds."""
-        if val == "*" or val == "":
-            secsout = val
-        else:
-            interval = self.interval_parser.parse(val)
-            seconds = interval.get_seconds()
-            secsout = seconds
-        return secsout
+        try:
+            return self.interval_parser.parse(str(val)).get_seconds()
+        except ISO8601SyntaxError:
+            return 0.0
 
     def change_sort_order(self, col, event=None, n=0):
         if hasattr(event, "button") and event.button != 1:

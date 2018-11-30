@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -18,6 +18,7 @@
 """Scan utilities for "cylc gscan" and "cylc gpanel"."""
 
 import os
+import re
 import signal
 from subprocess import Popen, PIPE, STDOUT
 import sys
@@ -25,10 +26,11 @@ from time import time
 
 import gtk
 
-from cylc.cfgspec.gcylc import gcfg
+from cylc.cfgspec.gcylc import GcylcConfig
 import cylc.flags
 from cylc.gui.legend import ThemeLegendWindow
 from cylc.gui.util import get_icon
+from cylc.hostuserutil import get_user
 from cylc.network.port_scan import (
     get_scan_items_from_fs, scan_many, DEBUG_DELIM)
 from cylc.suite_status import (
@@ -176,6 +178,7 @@ def get_gpanel_scan_menu(
     theme_items[theme] = gtk.RadioMenuItem(label=theme)
     thememenu.append(theme_items[theme])
     theme_items[theme].theme_name = theme
+    gcfg = GcylcConfig.get_inst()
     for theme in gcfg.get(['themes']):
         if theme == "default":
             continue
@@ -366,18 +369,14 @@ def get_scan_menu(suite_keys, toggle_hide_menu_bar):
 
 def launch_about_dialog(program_name, hosts):
     """Launch a modified version of the app_main.py About dialog."""
-    hosts_text = "Hosts monitored: " + ", ".join(hosts)
-    comments_text = hosts_text
     about = gtk.AboutDialog()
     if gtk.gtk_version[0] == 2 and gtk.gtk_version[1] >= 12:
         # set_program_name() was added in PyGTK 2.12
         about.set_program_name(program_name)
-    else:
-        comments_text = program_name + "\n" + hosts_text
-
     about.set_version(CYLC_VERSION)
-    about.set_copyright("Copyright (C) 2008-2018 NIWA")
-    about.set_comments(comments_text)
+    about.set_copyright("Copyright (C) 2008-2018 NIWA & British Crown"
+                        "(Met Office) & contributors")
+    about.set_comments(program_name)
     about.set_icon(get_icon())
     about.run()
     about.destroy()
@@ -395,10 +394,12 @@ def launch_hosts_dialog(existing_hosts, change_hosts_func):
     dialog = gtk.Dialog()
     dialog.set_icon(get_icon())
     dialog.vbox.set_border_width(5)
-    dialog.set_title("Configure suite hosts")
+    dialog.set_title("Scan ports of hosts for suites?")
     dialog.add_button(gtk.STOCK_CANCEL, gtk.RESPONSE_CANCEL)
     dialog.add_button(gtk.STOCK_OK, gtk.RESPONSE_OK)
-    label = gtk.Label("Enter a comma-delimited list of suite hosts to scan")
+    label = gtk.Label(
+        "Hosts (comma-delimited list) to perform port scan?\n"
+        "Look for suites on the file system if list is empty (default).")
     label.show()
     label_hbox = gtk.HBox()
     label_hbox.pack_start(label, expand=False, fill=False)
@@ -438,8 +439,7 @@ def launch_gcylc(key):
     # Get version of suite - now separate method get_suite_version()
     suite_version = get_suite_version(args)
 
-    # Run correct version of "cylc gui", provided that "admin/cylc-wrapper" is
-    # installed.
+    # Run correct version of "cylc gui".
     env = None
     if suite_version != CYLC_VERSION:
         env = dict(os.environ)
@@ -539,12 +539,14 @@ def update_suites_info(updater, full_mode=False):
     # Determine items to scan
     results = {}
     items = []
-    if full_mode and not updater.hosts:
-        # Get (host, port) list from file system
-        items.extend(get_scan_items_from_fs(owner_pattern, updater))
-    elif full_mode:
+    if full_mode and updater.hosts:
         # Scan full port range on all hosts
         items.extend(updater.hosts)
+        if owner_pattern is None:
+            owner_pattern = re.compile(r"\A" + get_user() + r"\Z")
+    elif full_mode:
+        # Get (host, port) list from file system
+        items.extend(get_scan_items_from_fs(owner_pattern, updater))
     else:
         # Scan suites in previous results only
         for (host, owner, name), prev_result in updater.suite_info_map.items():

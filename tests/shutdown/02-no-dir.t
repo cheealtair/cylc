@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 # 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -27,7 +27,7 @@ SYM_SUITE_NAME="${SUITE_NAME}-sym"
 ln -s "$(basename "${SUITE_NAME}")" "${SYM_SUITE_RUND}"
 run_fail "${TEST_NAME_BASE}-run" cylc run "${SYM_SUITE_NAME}" --debug --no-detach
 grep_ok 'Suite shutting down.*ERROR: unable to open database file' \
-    "${SUITE_RUN_DIR}/log/suite/log"
+    "${SUITE_RUN_DIR}/log/suite/log".*
 
 rm -f "${SYM_SUITE_RUND}"
 purge_suite "${SUITE_NAME}"

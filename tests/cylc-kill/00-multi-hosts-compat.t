@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -18,15 +18,9 @@
 # Test kill multiple jobs on localhost and a remote host
 CYLC_TEST_IS_GENERIC=false
 . "$(dirname "$0")/test_header"
-export CYLC_TEST_HOST=$(
-    cylc get-global-config -i '[test battery]remote host' 2>'/dev/null')
-if [[ -z "${CYLC_TEST_HOST}" ]]; then
-    skip_all '"[test battery]remote host": not defined'
-fi
-
+set_test_remote_host
 set_test_number 3
 
-export CYLC_CONF_PATH=
 install_suite "${TEST_NAME_BASE}" "${TEST_NAME_BASE}"
 
 run_ok "${TEST_NAME_BASE}-validate" \

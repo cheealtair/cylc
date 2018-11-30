@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -433,12 +433,11 @@ class ExclusionBase(object):
         pass
 
     def __contains__(self, point):
-        """Checks to see if the Exclusions object contains a point
-        in any of the exclusion sequences.
+        """Return True if the provided point is in this exclusion.
 
         Args:
-            point (str): The time point to check lies in the
-                ISO8601Sequence object.
+            point (PointBase): The cycle point to check.
+
         """
         if point in self.exclusion_points:
             return True
@@ -460,58 +459,3 @@ class ExclusionBase(object):
         if ',' in ret:
             ret = '(' + ret + ')'
         return ret
-
-
-if __name__ == "__main__":
-    import unittest
-
-    class TestBaseClasses(unittest.TestCase):
-        """Test the abstract base classes cannot be instantiated on their own
-        """
-        def test_simple_abstract_class_test(self):
-            """Cannot instantiate abstract classes, they must be defined in
-            the subclasses"""
-            self.assertRaises(TypeError, SequenceBase, "sequence-string",
-                              "context_string")
-            self.assertRaises(TypeError, IntervalBase, "value")
-            self.assertRaises(TypeError, PointBase, "value")
-
-    class TestParseExclusion(unittest.TestCase):
-        """Test cases for the parser function"""
-        def test_parse_exclusion_simple(self):
-            """Tests the simple case of exclusion parsing"""
-            expression = "PT1H!20000101T02Z"
-            sequence, exclusion = parse_exclusion(expression)
-
-            self.assertEqual(sequence, "PT1H")
-            self.assertEqual(exclusion, ['20000101T02Z'])
-
-        def test_parse_exclusions_list(self):
-            """Tests the simple case of exclusion parsing"""
-            expression = "PT1H!(T03, T06, T09)"
-            sequence, exclusion = parse_exclusion(expression)
-
-            self.assertEqual(sequence, "PT1H")
-            self.assertEqual(exclusion, ['T03', 'T06', 'T09'])
-
-        def test_parse_exclusions_list_spaces(self):
-            """Tests the simple case of exclusion parsing"""
-            expression = "PT1H!    (T03, T06,   T09)   "
-            sequence, exclusion = parse_exclusion(expression)
-
-            self.assertEqual(sequence, "PT1H")
-            self.assertEqual(exclusion, ['T03', 'T06', 'T09'])
-
-        def test_parse_bad_exclusion(self):
-            """Tests incorrectly formatted exclusions"""
-            expression1 = "T01/PT1H!(T06, T09), PT5M"
-            expression2 = "T01/PT1H!T03, PT17H, (T06, T09), PT5M"
-            expression3 = "T01/PT1H! PT8H, (T06, T09)"
-            expression4 = "T01/PT1H! T03, T06, T09"
-
-            self.assertRaises(Exception, parse_exclusion, expression1)
-            self.assertRaises(Exception, parse_exclusion, expression2)
-            self.assertRaises(Exception, parse_exclusion, expression3)
-            self.assertRaises(Exception, parse_exclusion, expression4)
-
-    unittest.main()

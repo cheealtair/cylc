@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -59,7 +59,6 @@ foo_m1=>bar_m1_n2
 """
 
 import re
-import unittest
 
 from cylc.task_id import TaskID
 from parsec.OrderedDict import OrderedDictWithDefaults
@@ -72,7 +71,8 @@ REC_P_ALL = re.compile(r"(%s)?(?:<(.*?)>)?(.+)?" % TaskID.NAME_RE)
 # To extract all parameter lists e.g. 'm,n,o' (from '<m,n,o>').
 REC_P_GROUP = re.compile(r"<(.*?)>")
 # To extract parameter name and optional offset or value e.g. 'm-1'.
-REC_P_OFFS = re.compile(r'(\w+)(?:\s*([-+=]\s*[\w]+))?')
+REC_P_OFFS = re.compile(
+    r'(\w+)\s*([\-\+]\s*\d+|=\s*%s)?' % TaskID.NAME_SUFFIX_RE)
 
 
 def item_in_iterable(item, itt):
@@ -123,70 +123,69 @@ class NameExpander(object):
              ('foo_i1_j1', {i:'1', j:'1'})]
         """
         # Create a string template and values to pass to the expansion method.
-        expanded = []
-        for namespace in REC_NAMES.findall(runtime_heading):
-            template = namespace.strip()
-            name, p_str_list, other = REC_P_ALL.match(template).groups()
-            if not p_str_list:
-                # Not parameterized.
-                if other:
-                    expanded.append((name + other, {}))
-                else:
-                    expanded.append((name, {}))
-                continue
-            if name:
-                tmpl = name
-            else:
-                tmpl = ''
-            # Get the subset of parameters used in this case.
-            used_param_names = []
+        results = []
+        for name in REC_NAMES.findall(runtime_heading):
+            tmpl = ''
             spec_vals = {}
-            for item in (i.strip() for i in p_str_list.split(',')):
-                pname, sval = REC_P_OFFS.match(item.strip()).groups()
-                if not self.param_cfg.get(pname, None):
-                    raise ParamExpandError(
-                        "ERROR, parameter %s is not defined in %s" % (
-                            pname, runtime_heading))
-                if sval:
-                    if sval.startswith('+') or sval.startswith('-'):
+            used_params = []
+            while name:
+                head, p_list_str, tail = REC_P_ALL.match(name.strip()).groups()
+                if not p_list_str:
+                    break
+                if head:
+                    tmpl += head
+                # Get the subset of parameters used in this case.
+                for item in (i.strip() for i in p_list_str.split(',')):
+                    pname, sval = REC_P_OFFS.match(item.strip()).groups()
+                    if not self.param_cfg.get(pname, None):
                         raise ParamExpandError(
-                            "ERROR, parameter index offsets are not"
-                            " supported in name expansion: %s%s" % (
-                                pname, sval))
-                    elif sval.startswith('='):
-                        # Check that specific parameter values exist.
-                        val = sval[1:].strip()
-                        # Pad integer values here.
-                        try:
-                            nval = int(val)
-                        except ValueError:
-                            nval = val
-                        if not item_in_iterable(nval, self.param_cfg[pname]):
+                            "ERROR, parameter %s is not defined in %s" % (
+                                pname, runtime_heading))
+                    if sval:
+                        if sval.startswith('+') or sval.startswith('-'):
                             raise ParamExpandError(
-                                "ERROR, parameter %s out of range: %s" % (
-                                    pname, p_str_list))
-                        spec_vals[pname] = nval
+                                "ERROR, parameter index offsets are not"
+                                " supported in name expansion: %s%s" % (
+                                    pname, sval))
+                        elif sval.startswith('='):
+                            # Check that specific parameter values exist.
+                            val = sval[1:].strip()
+                            # Pad integer values here.
+                            try:
+                                nval = int(val)
+                            except ValueError:
+                                nval = val
+                            if not item_in_iterable(
+                                    nval, self.param_cfg[pname]):
+                                raise ParamExpandError(
+                                    "ERROR, parameter %s out of range: %s" % (
+                                        pname, p_list_str))
+                            spec_vals[pname] = nval
+                    else:
+                        used_params.append((pname, self.param_cfg[pname]))
+                    tmpl += self.param_tmpl_cfg[pname]
+                if tail:
+                    name = tail
                 else:
-                    used_param_names.append(pname)
-                tmpl += self.param_tmpl_cfg[pname]
-            if other:
-                tmpl += other
-            used_params = [
-                (p, self.param_cfg[p]) for p in used_param_names]
-            self._expand_name(tmpl, used_params, expanded, spec_vals)
-        return expanded
+                    name = ''
+            if tmpl:
+                tmpl += name
+                self._expand_name(results, tmpl, used_params, spec_vals)
+            else:
+                results.append((name.strip(), {}))
+        return results
 
-    def _expand_name(self, tmpl, param_list, results, spec_vals=None):
-        """Expand tmpl for any number of parameters.
+    def _expand_name(self, results, tmpl, params, spec_vals=None):
+        """Recursively expand tmpl for any number of parameters.
 
         tmpl is a string template, e.g. 'foo_m%(m)s_n%(n)s' for two
             parameters m and n.
-        param_list is a list of tuples (name, max-val) for each parameter
+        params is a list of tuples (name, max-val) for each parameter
             to be looped over.
         spec_vals is a map of values for parameters that are not to be looped
             over because they've been assigned a specific value.
 
-        E.g. for "foo<m=0,n>" tmpl is "foo_m%(m)s_n%(n)s", param_list is
+        E.g. for "foo<m=0,n>" tmpl is "foo_m%(m)s_n%(n)s", params is
         [('n', 2)], and spec_values {'m': 0}.
 
         results contains the expanded names and corresponding parameter values,
@@ -194,7 +193,7 @@ class NameExpander(object):
         """
         if spec_vals is None:
             spec_vals = {}
-        if not param_list:
+        if not params:
             # Inner loop.
             current_values = dict(spec_vals)
             try:
@@ -203,9 +202,9 @@ class NameExpander(object):
                 raise ParamExpandError('ERROR: parameter %s is not '
                                        'defined.' % str(exc.args[0]))
         else:
-            for param_val in param_list[0][1]:
-                spec_vals[param_list[0][0]] = param_val
-                self._expand_name(tmpl, param_list[1:], results, spec_vals)
+            for param_val in params[0][1]:
+                spec_vals[params[0][0]] = param_val
+                self._expand_name(results, tmpl, params[1:], spec_vals)
 
     def expand_parent_params(self, parent, param_values, origin):
         """Replace parameters with specific values in inherited parent names.
@@ -220,17 +219,17 @@ class NameExpander(object):
         then it must be a legal value for that parameter.
 
         """
-        name, p_str_list, other = REC_P_ALL.match(parent).groups()
-        if not p_str_list:
-            return name
+        head, p_list_str, tail = REC_P_ALL.match(parent).groups()
+        if not p_list_str:
+            return head
         used = {}
-        for item in (i.strip() for i in p_str_list.split(',')):
+        for item in (i.strip() for i in p_list_str.split(',')):
             if '-' in item or '+' in item:
                 raise ParamExpandError(
                     "ERROR, parameter offsets illegal here: '%s'" % origin)
             elif '=' in item:
                 # Specific value given.
-                pname, pval = re.split('\s*=\s*', item)
+                pname, pval = [val.strip() for val in item.split('=', 1)]
                 try:
                     pval = int(pval)
                 except ValueError:
@@ -252,14 +251,14 @@ class NameExpander(object):
                     raise ParamExpandError(
                         "ERROR, parameter '%s' undefined in '%s'" % (
                             item, origin))
-        if name:
-            tmpl = name
+        if head:
+            tmpl = head
         else:
             tmpl = ''
         for pname in used:
             tmpl += self.param_tmpl_cfg[pname]
-        if other:
-            tmpl += other
+        if tail:
+            tmpl += tail
         return tmpl % used
 
 
@@ -388,191 +387,3 @@ class GraphExpander(object):
                 values[param_list[0][0]] = param_val
                 self._expand_graph(line, all_params,
                                    param_list[1:], line_set, values)
-
-
-class TestParamExpand(unittest.TestCase):
-    """Unit tests for the parameter expansion module."""
-
-    def setUp(self):
-        """Create some parameters and templates for use in tests."""
-        params_map = {'a': [-3, -1], 'i': [0, 1], 'j': [0, 1, 2], 'k': [0, 1]}
-        # k has template is deliberately bad
-        templates = {
-            'a': '_a%(a)d', 'i': '_i%(i)d', 'j': '_j%(j)d', 'k': '_k%(z)d'}
-        self.name_expander = NameExpander((params_map, templates))
-        self.graph_expander = GraphExpander((params_map, templates))
-
-    def test_name_one_param(self):
-        """Test name expansion and returned value for a single parameter."""
-        self.assertEqual(
-            self.name_expander.expand('foo<j>'),
-            [('foo_j0', {'j': 0}),
-             ('foo_j1', {'j': 1}),
-             ('foo_j2', {'j': 2})]
-        )
-
-    def test_name_two_params(self):
-        """Test name expansion and returned values for two parameters."""
-        self.assertEqual(
-            self.name_expander.expand('foo<i,j>'),
-            [('foo_i0_j0', {'i': 0, 'j': 0}),
-             ('foo_i0_j1', {'i': 0, 'j': 1}),
-             ('foo_i0_j2', {'i': 0, 'j': 2}),
-             ('foo_i1_j0', {'i': 1, 'j': 0}),
-             ('foo_i1_j1', {'i': 1, 'j': 1}),
-             ('foo_i1_j2', {'i': 1, 'j': 2})]
-        )
-
-    def test_name_two_names(self):
-        """Test name expansion for two names."""
-        self.assertEqual(
-            self.name_expander.expand('foo<i>, bar<j>'),
-            [('foo_i0', {'i': 0}),
-             ('foo_i1', {'i': 1}),
-             ('bar_j0', {'j': 0}),
-             ('bar_j1', {'j': 1}),
-             ('bar_j2', {'j': 2})]
-        )
-
-    def test_name_specific_val_1(self):
-        """Test singling out a specific value, in name expansion."""
-        self.assertEqual(
-            self.name_expander.expand('foo<i=0>'),
-            [('foo_i0', {'i': 0})]
-        )
-
-    def test_name_specific_val_2(self):
-        """Test specific value in the first parameter of a pair."""
-        self.assertEqual(
-            self.name_expander.expand('foo<i=0,j>'),
-            [('foo_i0_j0', {'i': 0, 'j': 0}),
-             ('foo_i0_j1', {'i': 0, 'j': 1}),
-             ('foo_i0_j2', {'i': 0, 'j': 2})]
-        )
-
-    def test_name_specific_val_3(self):
-        """Test specific value in the second parameter of a pair."""
-        self.assertEqual(
-            self.name_expander.expand('foo<i,j=1>'),
-            [('foo_i0_j1', {'i': 0, 'j': 1}),
-             ('foo_i1_j1', {'i': 1, 'j': 1})]
-        )
-
-    def test_name_fail_bare_value(self):
-        """Test foo<0,j> fails."""
-        # It should be foo<i=0,j>.
-        self.assertRaises(ParamExpandError,
-                          self.name_expander.expand, 'foo<0,j>')
-
-    def test_name_fail_undefined_param(self):
-        """Test that an undefined parameter gets failed."""
-        # m is not defined.
-        self.assertRaises(ParamExpandError,
-                          self.name_expander.expand, 'foo<m,j>')
-
-    def test_name_fail_param_value_too_high(self):
-        """Test that an out-of-range parameter gets failed."""
-        # i stops at 3.
-        self.assertRaises(ParamExpandError,
-                          self.name_expander.expand, 'foo<i=4,j>')
-
-    def test_name_multiple(self):
-        """Test expansion of two names, with one and two parameters."""
-        self.assertEqual(
-            self.name_expander.expand('foo<i>, bar<i,j>'),
-            [('foo_i0', {'i': 0}),
-             ('foo_i1', {'i': 1}),
-             ('bar_i0_j0', {'i': 0, 'j': 0}),
-             ('bar_i0_j1', {'i': 0, 'j': 1}),
-             ('bar_i0_j2', {'i': 0, 'j': 2}),
-             ('bar_i1_j0', {'i': 1, 'j': 0}),
-             ('bar_i1_j1', {'i': 1, 'j': 1}),
-             ('bar_i1_j2', {'i': 1, 'j': 2})]
-        )
-
-    def test_graph_expand_1(self):
-        """Test graph expansion with two parameters each side of an arrow."""
-        self.assertEqual(
-            self.graph_expander.expand("bar<i,j>=>baz<i,j>"),
-            set(["bar_i0_j1=>baz_i0_j1",
-                 "bar_i1_j2=>baz_i1_j2",
-                 "bar_i0_j2=>baz_i0_j2",
-                 "bar_i1_j1=>baz_i1_j1",
-                 "bar_i1_j0=>baz_i1_j0",
-                 "bar_i0_j0=>baz_i0_j0"])
-        )
-
-    def test_graph_expand_2(self):
-        """Test graph expansion to 'branch and merge' a workflow."""
-        self.assertEqual(
-            self.graph_expander.expand("pre=>bar<i>=>baz<i,j>=>post"),
-            set(["pre=>bar_i0=>baz_i0_j1=>post",
-                 "pre=>bar_i1=>baz_i1_j2=>post",
-                 "pre=>bar_i0=>baz_i0_j2=>post",
-                 "pre=>bar_i1=>baz_i1_j1=>post",
-                 "pre=>bar_i1=>baz_i1_j0=>post",
-                 "pre=>bar_i0=>baz_i0_j0=>post"])
-        )
-
-    def test_graph_expand_3(self):
-        """Test graph expansion -ve integers."""
-        self.assertEqual(
-            self.graph_expander.expand("bar<a>"),
-            set(["bar_a-1", "bar_a-3"]))
-
-    def test_graph_expand_offset_1(self):
-        """Test graph expansion with a -ve offset."""
-        self.assertEqual(
-            self.graph_expander.expand("bar<i-1,j>=>baz<i,j>"),
-            set(["baz_i0_j0",
-                 "baz_i0_j1",
-                 "baz_i0_j2",
-                 "bar_i0_j0=>baz_i1_j0",
-                 "bar_i0_j1=>baz_i1_j1",
-                 "bar_i0_j2=>baz_i1_j2"])
-        )
-
-    def test_graph_expand_offset_2(self):
-        """Test graph expansion with a +ve offset."""
-        self.assertEqual(
-            self.graph_expander.expand("baz<i>=>baz<i+1>"),
-            set(["baz_i0=>baz_i1"])
-        )
-
-    def test_graph_expand_specific(self):
-        """Test graph expansion with a specific value."""
-        self.assertEqual(
-            self.graph_expander.expand("bar<i=1,j>=>baz<i,j>"),
-            set(["bar_i1_j0=>baz_i0_j0",
-                 "bar_i1_j1=>baz_i0_j1",
-                 "bar_i1_j2=>baz_i0_j2",
-                 "bar_i1_j0=>baz_i1_j0",
-                 "bar_i1_j1=>baz_i1_j1",
-                 "bar_i1_j2=>baz_i1_j2"])
-        )
-
-    def test_graph_fail_bare_value(self):
-        """Test that a bare parameter value fails in the graph."""
-        self.assertRaises(ParamExpandError,
-                          self.graph_expander.expand, 'foo<0,j>=>bar<i,j>')
-
-    def test_graph_fail_undefined_param(self):
-        """Test that an undefined parameter value fails in the graph."""
-        self.assertRaises(ParamExpandError,
-                          self.graph_expander.expand, 'foo<m,j>=>bar<i,j>')
-
-    def test_graph_fail_param_value_too_high(self):
-        """Test that an out-of-range parameter value fails in the graph."""
-        self.assertRaises(ParamExpandError,
-                          self.graph_expander.expand, 'foo<i=4,j><i,j>')
-
-    def test_template_fail_missing_param(self):
-        """Test a template string specifying a non-existent parameter."""
-        self.assertRaises(
-            ParamExpandError, self.name_expander.expand, 'foo<k>')
-        self.assertRaises(
-            ParamExpandError, self.graph_expander.expand, 'foo<k>')
-
-
-if __name__ == "__main__":
-    unittest.main()

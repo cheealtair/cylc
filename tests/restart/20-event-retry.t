@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 # 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -27,7 +27,7 @@ if ! which sqlite3 > /dev/null; then
     skip 1 "sqlite3 not installed?"
 else
     sqlite3 "${SUITED}/log/db" \
-        'SELECT COUNT(*) FROM task_action_timers WHERE ctx_key_pickle GLOB "*event-handler-00*"' \
+        'SELECT COUNT(*) FROM task_action_timers WHERE ctx_key GLOB "*event-handler-00*"' \
         >"${TEST_NAME_BASE}-db-n-entries"
     cmp_ok "${TEST_NAME_BASE}-db-n-entries" <<<'1'
 fi
@@ -37,7 +37,7 @@ cmp_ok "${SUITED}/file" <<'__TEXT__'
 2
 __TEXT__
 grep_ok 'LOADING task action timers' "${SUITED}/log/suite/log"
-grep_ok "+ t01\\.1 (('event-handler-00', 'succeeded'), 1)" "${SUITED}/log/suite/log"
+grep_ok "+ t01\\.1 \[\[u'event-handler-00', u'succeeded'\], 1\]" "${SUITED}/log/suite/log"
 
 purge_suite "${SUITE_NAME}"
 exit

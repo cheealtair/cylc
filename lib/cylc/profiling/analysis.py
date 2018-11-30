@@ -1,5 +1,5 @@
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@ import os
 import re
 import sys
 
-# Import modules required for plotting if avaliable.
+# Import modules required for plotting if available.
 try:
     import numpy
     import warnings
@@ -27,8 +27,10 @@ try:
     import matplotlib.cm as colour_map
     import matplotlib.pyplot as plt
     CAN_PLOT = True
-except ImportError:
+except (ImportError, RuntimeError):
     CAN_PLOT = False
+
+from cylc.wallclock import get_unix_time_from_time_string
 
 from . import (PROFILE_MODE_TIME, PROFILE_MODE_CYLC, SUMMARY_LINE_REGEX,
                MEMORY_LINE_REGEX, LOOP_MEMORY_LINE_REGEX, SLEEP_FUNCTION_REGEX,
@@ -36,7 +38,6 @@ from . import (PROFILE_MODE_TIME, PROFILE_MODE_CYLC, SUMMARY_LINE_REGEX,
                METRIC_TITLE, METRIC_UNIT, METRIC_FILENAME, METRIC_FIELDS,
                QUICK_ANALYSIS_METRICS)
 from .git import (order_versions_by_date, describe)
-from cylc.wallclock import get_unix_time_from_time_string
 
 
 def mean(data):
@@ -316,8 +317,8 @@ def print_table(table, transpose=False):
         table = map(list, zip(*table))
     if not table:
         return
-    for row_no in range(len(table)):
-        for col_no in range(len(table[0])):
+    for row_no, _ in enumerate(table):
+        for col_no, _ in enumerate(table[0]):
             cell = table[row_no][col_no]
             if cell is None:
                 table[row_no][col_no] = []
@@ -325,12 +326,12 @@ def print_table(table, transpose=False):
                 table[row_no][col_no] = str(cell)
 
     col_widths = []
-    for col_no in range(len(table[0])):
+    for col_no, _ in enumerate(table[0]):
         col_widths.append(
-            max(len(table[row_no][col_no]) for row_no in range(len(table))))
+            max(len(table[row_no][col_no]) for row_no, _ in enumerate(table)))
 
-    for row_no in range(len(table)):
-        for col_no in range(len(table[row_no])):
+    for row_no, _ in enumerate(table):
+        for col_no, _ in enumerate(table[row_no]):
             if col_no != 0:
                 sys.stdout.write('  ')
             cell = table[row_no][col_no]
@@ -370,7 +371,8 @@ def plot_scale(results, run_names, versions, metric, experiment,
     """Create a scatter plot with line of best fit interpreting float(run_name)
     as the x-axis value."""
     x_data = [int(run_name) for run_name in run_names]
-    colours = [c_map(x / (len(versions) - 0.99)) for x in range(len(versions))]
+    colours = [c_map(x / (len(versions) - 0.99))
+               for x, _ in enumerate(versions)]
 
     for ver_no, version in enumerate(reversed(versions)):
         y_data = []
@@ -457,7 +459,7 @@ def plot_results(results, versions, experiment, plt_dir=None,
 
         # Output graph.
         if not plt_dir:
-            # Output directory not specified, use interractive mode.
+            # Output directory not specified, use interactive mode.
             plt.show()
         else:
             # Output directory specified, save figure as a pdf.

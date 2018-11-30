@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -26,14 +26,18 @@ run_ok "${TEST_NAME_BASE}" cylc run --reference-test --debug --no-detach "${SUIT
 cmp_ok "${SUITE_RUN_DIR}/cylc-show.out" <<'__OUT__'
 title: (not given)
 description: (not given)
+URL: (not given)
 
 prerequisites (- => not satisfied):
   (None)
 
 outputs (- => not completed):
+  - t1.1 expired
   + t1.1 submitted
+  - t1.1 submit-failed
   + t1.1 started
   + t1.1 succeeded
+  - t1.1 failed
   - t1.1 Greet World
   - t1.1 Hello World
 __OUT__

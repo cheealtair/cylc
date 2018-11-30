@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -37,8 +37,10 @@ cylc__job__main() {
     fi
     # Prelude
     typeset file_name=
+    # conf/job-init-env.sh for back-compat pre 7.7.0.
     for file_name in \
         "${HOME}/.cylc/job-init-env.sh" \
+        "${CYLC_DIR}/etc/job-init-env.sh" \
         "${CYLC_DIR}/conf/job-init-env.sh"
     do
         if [[ -f "${file_name}" ]]; then
@@ -78,12 +80,13 @@ cylc__job__main() {
             typeset host="$(hostname -f)"
         fi
     fi
-    cat <<__OUT__
-Suite    : ${CYLC_SUITE_NAME}
-Task Job : ${CYLC_TASK_JOB} (try ${CYLC_TASK_TRY_NUMBER})
-User@Host: ${USER}@${host}
-
-__OUT__
+    # Developer Note:
+    # We were using a HERE document for writing info here until we notice that
+    # Bash uses temporary files for HERE documents, which can be inefficient.
+    echo "Suite    : ${CYLC_SUITE_NAME}"
+    echo "Task Job : ${CYLC_TASK_JOB} (try ${CYLC_TASK_TRY_NUMBER})"
+    echo "User@Host: ${USER}@${host}"
+    echo
     # Derived environment variables
     export CYLC_SUITE_LOG_DIR="${CYLC_SUITE_RUN_DIR}/log/suite"
     CYLC_SUITE_WORK_DIR_ROOT="${CYLC_SUITE_WORK_DIR_ROOT:-${CYLC_SUITE_RUN_DIR}}"
@@ -95,7 +98,8 @@ __OUT__
     # Otherwise, a zero padded number will be interpreted as an octal.
     export CYLC_TASK_SUBMIT_NUMBER=$((10#$(cut -d '/' -f 3 <<<"${CYLC_TASK_JOB}")))
     export CYLC_TASK_ID="${CYLC_TASK_NAME}.${CYLC_TASK_CYCLE_POINT}"
-    export CYLC_TASK_LOG_ROOT="${CYLC_SUITE_RUN_DIR}/log/job/${CYLC_TASK_JOB}/job"
+    export CYLC_TASK_LOG_DIR="${CYLC_SUITE_RUN_DIR}/log/job/${CYLC_TASK_JOB}"
+    export CYLC_TASK_LOG_ROOT="${CYLC_TASK_LOG_DIR}/job"
     if [[ -n "${CYLC_TASK_WORK_DIR_BASE:-}" ]]; then
         # Note: value of CYLC_TASK_WORK_DIR_BASE may contain variable
         # substitution syntax including some of the derived variables above, so
@@ -119,13 +123,10 @@ __OUT__
     # Env-Script
     cylc__job__run_inst_func 'env_script'
     # Send task started message
-    cylc message 'started' &
+    cylc message -- "${CYLC_SUITE_NAME}" "${CYLC_TASK_JOB}" 'started' &
     CYLC_TASK_MESSAGE_STARTED_PID=$!
-    # Access to the suite bin directory
-    if [[ -n "${CYLC_SUITE_DEF_PATH:-}" && -d "${CYLC_SUITE_DEF_PATH}/bin" ]]
-    then
-        export PATH="${CYLC_SUITE_DEF_PATH}/bin:${PATH}"
-    fi
+    # Access to the suite bin directory (installed run-dir first).
+    export PATH="${CYLC_SUITE_RUN_DIR}/bin:${CYLC_SUITE_DEF_PATH}/bin:${PATH}"
     # Create share and work directories
     mkdir -p "${CYLC_SUITE_SHARE_DIR}" || true
     mkdir -p "$(dirname "${CYLC_TASK_WORK_DIR}")" || true
@@ -141,15 +142,17 @@ __OUT__
     rmdir "${CYLC_TASK_WORK_DIR}" 2>'/dev/null' || true
     # Send task succeeded message
     wait "${CYLC_TASK_MESSAGE_STARTED_PID}" 2>'/dev/null' || true
-    cylc message 'succeeded' || true
-    trap '' EXIT
+    cylc message -- "${CYLC_SUITE_NAME}" "${CYLC_TASK_JOB}" 'succeeded' || true
+    trap '' ${CYLC_VACATION_SIGNALS:-} ${CYLC_FAIL_SIGNALS}
+    # Execute success exit script
+    cylc__job__run_inst_func 'exit_script'
     exit 0
 }
 
 ###############################################################################
 # Run a function in the task job instance file, if possible.
 # Arguments:
-#   func_name - name of function without the "cylc__job__inst__" prefix
+#   func_name: name of function without the "cylc__job__inst__" prefix
 # Returns:
 #   return 0, or the return code of the function if called
 cylc__job__run_inst_func() {
@@ -167,51 +170,45 @@ cylc__job__run_inst_func() {
 #   CYLC_TASK_MESSAGE_STARTED_PID
 #   CYLC_VACATION_SIGNALS
 # Arguments:
-#   signal - trapped or given signal
-#   severity - message severity
-#   run_err_script - boolean, run job err script or not
-#   messages - (remaining arguments)
-#              messages to send back to the suite server program
+#   signal: trapped or given signal
+#   run_err_script (boolean): run job err script or not
+#   messages (remaining arguments):
+#     messages to send back to the suite server program,
+#     see "cylc help message" for format of messages.
 # Returns:
 #   exit 1
-cylc__job_finish() {
+cylc__job_finish_err() {
     typeset signal="$1"
-    typeset severity="$2"
-    typeset run_err_script="$3"
-    shift 3
+    typeset run_err_script="$2"
+    shift 2
     typeset signal_name=
-    for signal_name in ${CYLC_VACATION_SIGNALS:-} ${CYLC_FAIL_SIGNALS}; do
-        trap '' "${signal_name}"
-    done
+    trap '' ${CYLC_VACATION_SIGNALS:-} ${CYLC_FAIL_SIGNALS}
     if [[ -n "${CYLC_TASK_MESSAGE_STARTED_PID:-}" ]]; then
         wait "${CYLC_TASK_MESSAGE_STARTED_PID}" 2>'/dev/null' || true
     fi
-    cylc message -s "${severity}" "$@" || true
-    if $run_err_script; then
+    cylc message -- "${CYLC_SUITE_NAME}" "${CYLC_TASK_JOB}" "$@" || true
+    if "${run_err_script}"; then
         cylc__job__run_inst_func 'err_script' "${signal}" >&2
     fi
     exit 1
 }
 
 ###############################################################################
-# Wrap cylc__job_finish to abort with a user-defined error message.
+# Wrap cylc__job_finish_err to abort with a user-defined error message.
 cylc__job_abort() {
-    cylc__job_finish \
-        "EXIT" "CRITICAL" true "Task job script aborted with \"${1}\""
+    cylc__job_finish_err "EXIT" true "CRITICAL: aborted/\"${1}\""
 }
 
 ###############################################################################
-# Wrap cylc__job_finish for job preempt/vacation signal trap.
+# Wrap cylc__job_finish_err for job preempt/vacation signal trap.
 cylc__job_vacation() {
-    cylc__job_finish \
-        "${1}" "WARNING" false "Task job script vacated by signal ${1}"
+    cylc__job_finish_err "${1}" false "WARNING: vacated/${1}"
 }
 
 ###############################################################################
-# Wrap cylc__job_finish for automatic job exit signal trap.
+# Wrap cylc__job_finish_err for automatic job exit signal trap.
 cylc__job_err() {
-    cylc__job_finish \
-        "${1}" "CRITICAL" true "Task job script received signal ${1}"
+    cylc__job_finish_err "${1}" true "CRITICAL: failed/${1}"
 }
 
 ###############################################################################
@@ -221,10 +218,10 @@ cylc__job_err() {
 #   CYLC_TASK_CYCLE_POINT
 #   CYLC_CYCLING_MODE
 # Arguments:
-#   Fail try 1 only (T/F)
-#   Fail cycle points:
-#     'all' - fail all cycle points
-#     'P1 P2 P3 ...' - fail these cycle points
+#   fail_try_1_only (boolean): fail only on 1st try
+#   fail_cycle_points (remaining arguments):
+#     'all': fail all cycle points
+#     'P1 P2 P3 ...': fail these cycle points
 # Returns:
 #   0 - dummy job succeed
 #   1 - dummy job fail

@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -24,8 +24,8 @@ install_suite $TEST_NAME_BASE $TEST_NAME_BASE
 #-------------------------------------------------------------------------------
 TEST_NAME=$TEST_NAME_BASE-validate
 run_fail "$TEST_NAME" cylc validate $SUITE_NAME
-cmp_ok "$TEST_NAME.stderr" <<'__ERR__'
-Illegal ISO 8601 interval value: [cylc][reference test]live mode suite timeout = 120
+contains_ok "${TEST_NAME}.stderr" <<'__ERR__'
+Illegal item: [scheduling]initial cycle time
 __ERR__
 #-------------------------------------------------------------------------------
 # Run the convert-suggest-tool.

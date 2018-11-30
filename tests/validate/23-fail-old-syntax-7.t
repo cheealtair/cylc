@@ -1,6 +1,6 @@
 #!/bin/bash
 # THIS FILE IS PART OF THE CYLC SUITE ENGINE.
-# Copyright (C) 2008-2018 NIWA
+# Copyright (C) 2008-2018 NIWA & British Crown (Met Office) & Contributors.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -16,16 +16,15 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #-------------------------------------------------------------------------------
 # Test validation with a  prev-style cycle synax and post-style retry syntax
-. $(dirname $0)/test_header
+. "$(dirname "$0")/test_header"
 #-------------------------------------------------------------------------------
 set_test_number 2
 #-------------------------------------------------------------------------------
-install_suite $TEST_NAME_BASE $TEST_NAME_BASE
+install_suite "${TEST_NAME_BASE}" "${TEST_NAME_BASE}"
 #-------------------------------------------------------------------------------
-TEST_NAME=$TEST_NAME_BASE
-run_fail $TEST_NAME cylc validate --debug -v $SUITE_NAME
-grep_ok "Illegal ISO 8601 interval value: \[cylc\]\[events\]timeout = 4320" \
-    $TEST_NAME.stderr
+TEST_NAME="${TEST_NAME_BASE}"
+run_fail "${TEST_NAME}" cylc validate -v "${SUITE_NAME}"
+contains_ok "${TEST_NAME}.stderr" <<<'Illegal item: [scheduling]initial cycle time'
 #-------------------------------------------------------------------------------
-purge_suite $SUITE_NAME
+purge_suite "${SUITE_NAME}"
 exit
